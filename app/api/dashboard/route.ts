@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+const DEFAULT_DATA_SERVICE_URL =
+  "https://dhanak05.app.n8n.cloud/webhook/product-mix/sku-visibility";
+
 type DashboardRequest = {
   search?: string;
   valuationArea?: string;
@@ -10,14 +13,8 @@ type DashboardRequest = {
 };
 
 export async function POST(request: Request) {
-  const webhookUrl = process.env.N8N_SKU_VISIBILITY_WEBHOOK_URL;
-
-  if (!webhookUrl) {
-    return NextResponse.json(
-      { error: "The live data service is not configured." },
-      { status: 503 },
-    );
-  }
+  const webhookUrl =
+    process.env.N8N_SKU_VISIBILITY_WEBHOOK_URL ?? DEFAULT_DATA_SERVICE_URL;
 
   try {
     const input = (await request.json()) as DashboardRequest;
