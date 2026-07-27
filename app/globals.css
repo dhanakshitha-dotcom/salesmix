@@ -1060,8 +1060,16 @@ main {
   background: rgba(17, 139, 104, 0.85);
 }
 
+.scatter-dot.dot-improving {
+  background: rgba(35, 104, 232, 0.85);
+}
+
 .scatter-dot.dot-down {
   background: rgba(201, 75, 85, 0.84);
+}
+
+.scatter-dot.dot-unclassified {
+  background: rgba(118, 132, 151, 0.8);
 }
 
 .chart-legend {

@@ -21,6 +21,16 @@ test("preserves the SKU Pulse live-data and metric-honesty contract", async () =
   assert.match(page, /Model & data health/);
   assert.match(page, /All sales territories/);
   assert.match(page, /Recommendation acceptance/);
+  assert.match(page, /From exposure to repeat sell-in/);
+  assert.match(page, /Line count/);
+  assert.match(page, />Value</);
+  assert.match(page, /Declining/);
+  assert.match(page, /Improving/);
+  assert.match(page, /Healthy/);
+  assert.match(page, /Recommendation mix/);
+  assert.match(page, /Whitespace trial/);
+  assert.match(page, /Graduated/);
+  assert.match(page, /Stored seed to captured trial/);
   assert.match(page, /Unavailable fields remain blank/);
   assert.match(page, /No exact recommendation evidence is stored/);
   assert.doesNotMatch(page, /const\s+(?:products|skus|portfolioData)\s*=\s*\[/i);

@@ -8,6 +8,7 @@ import {
 } from "react";
 
 type View = "portfolio" | "sku" | "whitespace" | "regional" | "health";
+type MetricMode = "count" | "value";
 
 type Product = {
   product_id: string;
@@ -38,8 +39,12 @@ type Product = {
   last_sale_date: string | null;
   observed_unit_price: number | null;
   return_rate_pct: number | null;
+  sales_trend_pct: number | null;
   buyer_penetration_pct: number | null;
   whitespace_customers: number;
+  familiar_profile_count: number;
+  whitespace_trial_profile_count: number;
+  graduated_profile_count: number | null;
 };
 
 type Summary = {
@@ -57,6 +62,10 @@ type Summary = {
   invoiceLines: number;
   invoices: number;
   recommendations: number;
+  recommendationLines: number;
+  whitespaceTrialLines: number;
+  graduatedLines: number;
+  recommendedValue: number;
   feedbackRecords: number;
   soldProducts: number;
   activeMarketCustomers: number;
@@ -261,6 +270,7 @@ export default function Home() {
   const [valuationArea, setValuationArea] = useState("");
   const [search, setSearch] = useState("");
   const [selectedSkuId, setSelectedSkuId] = useState("");
+  const [metricMode, setMetricMode] = useState<MetricMode>("count");
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -450,7 +460,7 @@ export default function Home() {
             <section className="load-state"><strong>Loading the live SKU platform…</strong><span>Reading PostgreSQL through the n8n data service.</span></section>
           ) : data ? (
             <>
-              {view === "portfolio" && <PortfolioView data={data} items={items} openSku={openSku} region={region} />}
+              {view === "portfolio" && <PortfolioView data={data} items={items} openSku={openSku} region={region} metricMode={metricMode} setMetricMode={setMetricMode} />}
               {view === "sku" && selectedItem && <SkuView data={data} item={selectedItem} items={items} setSelectedSkuId={setSelectedSkuId} region={region} />}
               {view === "whitespace" && <WhitespaceView data={data} items={items} openSku={openSku} region={region} />}
               {view === "regional" && <RegionalView data={data} selectedRegion={region} />}
@@ -474,15 +484,32 @@ function PortfolioView({
   items,
   openSku,
   region,
+  metricMode,
+  setMetricMode,
 }: {
   data: DashboardData;
   items: Product[];
   openSku: (id: string) => void;
   region: string;
+  metricMode: MetricMode;
+  setMetricMode: (mode: MetricMode) => void;
 }) {
   const { summary } = data;
   const maxSales = Math.max(...items.map((item) => item.net_sales_value), 1);
   const trendValues = data.monthlySales.map((item) => item.net_sales);
+  const journeyRows: [string, number | null, number, string][] = metricMode === "count"
+    ? [
+        ["Recommended", summary.recommendationLines || null, 100, "All issued recommendation lines"],
+        ["Evaluated", null, 68, "Awaiting linked invoice feedback"],
+        ["Invoice accepted", null, 42, "Awaiting exact cart / recommendation linkage"],
+        ["Repeat purchase", null, 18, "Awaiting a linked follow-up purchase"],
+      ]
+    : [
+        ["Recommended", summary.recommendedValue || null, 100, "Planned mix value from issued carts"],
+        ["Evaluated", null, 68, "Awaiting linked invoice feedback"],
+        ["Invoice accepted", null, 42, "Awaiting exact matched invoice value"],
+        ["Repeat purchase", null, 18, "Awaiting a linked follow-up purchase"],
+      ];
   return (
     <>
       <div className="basis-strip">
@@ -502,25 +529,30 @@ function PortfolioView({
 
       <section className="two-column">
         <article className="card">
-          <SectionHeader eyebrow="SALES JOURNEY" title="Gross sales to net result" subtitle="Returns remain separate and are never hidden inside acceptance." action={<BasisTag>Live invoices</BasisTag>} />
+          <SectionHeader
+            eyebrow="RECOMMENDATION JOURNEY"
+            title="From exposure to repeat sell-in"
+            subtitle="Unavailable outcome stages remain blank and are never inferred from sales."
+            action={
+              <div className="segmented" aria-label="Funnel metric mode">
+                <button className={metricMode === "count" ? "active" : ""} onClick={() => setMetricMode("count")} aria-pressed={metricMode === "count"}>Line count</button>
+                <button className={metricMode === "value" ? "active" : ""} onClick={() => setMetricMode("value")} aria-pressed={metricMode === "value"}>Value</button>
+              </div>
+            }
+          />
           <div className="funnel">
-            {[
-              ["Gross sales", summary.grossSales, 100, `${number(summary.invoiceLines)} invoice lines`],
-              ["Net sales", summary.netSales, summary.grossSales ? summary.netSales / summary.grossSales * 100 : 0, `${money(summary.returnsValue)} returned`],
-              ["Net quantity", summary.netQuantity, 72, "Signed sales and return quantity"],
-              ["Recommendation accepted", null, 8, "Awaiting exact cart / recommendation linkage"],
-            ].map(([label, value, width, note], index) => (
+            {journeyRows.map(([label, value, width, note], index) => (
               <div className="funnel-row" key={String(label)}>
                 <span className="funnel-index">{index + 1}</span>
                 <div>
-                  <div className="funnel-meta"><strong>{label}</strong><b>{value === null ? "—" : index === 2 ? number(Number(value)) : money(Number(value))}</b></div>
+                  <div className="funnel-meta"><strong>{label}</strong><b>{value === null ? "—" : metricMode === "count" ? number(value) : money(value)}</b></div>
                   <div className="funnel-track"><i className={value === null ? "blank-bar" : ""} style={{ width: `${Math.max(Number(width), 5)}%` }} /></div>
                   <small>{note}</small>
                 </div>
               </div>
             ))}
           </div>
-          <div className="funnel-foot"><span><i className="legend pending" /> {number(summary.invoices)} invoices</span><span><i className="legend rejected" /> {pct(summary.returnRatePct)} return rate</span></div>
+          <div className="funnel-foot"><span><i className="legend pending" /> {number(summary.recommendations)} issued cart</span><span><i className="legend rejected" /> {number(summary.feedbackRecords)} evaluated outcomes</span></div>
         </article>
 
         <article className="card">
@@ -532,18 +564,32 @@ function PortfolioView({
             {items.slice(0, 40).map((item) => {
               const salesPosition = item.net_sales_value > 0 ? Math.max(7, item.net_sales_value / maxSales * 86) : 7;
               const size = Math.max(15, Math.min(32, 14 + Math.log10(Math.max(item.net_sales_value, 1))));
+              const trendState = item.sales_trend_pct === null
+                ? "unclassified"
+                : item.sales_trend_pct < -5
+                  ? "declining"
+                  : item.sales_trend_pct > 5
+                    ? "improving"
+                    : "healthy";
+              const trendClass = trendState === "declining"
+                ? "dot-down"
+                : trendState === "healthy"
+                  ? "dot-proven"
+                  : trendState === "unclassified"
+                    ? "dot-unclassified"
+                    : "dot-improving";
               return (
                 <button
                   key={item.product_id}
-                  className={`scatter-dot ${item.return_rate_pct && item.return_rate_pct > 5 ? "dot-down" : ""}`}
+                  className={`scatter-dot ${trendClass}`}
                   style={{ left: `${Math.min(Math.max(item.buyer_penetration_pct ?? 0, 5), 92)}%`, bottom: `${salesPosition}%`, width: size, height: size }}
-                  title={`${item.product_id}: ${pct(item.buyer_penetration_pct)} buyer penetration, ${money(item.net_sales_value)} net sales`}
+                  title={`${item.product_id}: ${pct(item.buyer_penetration_pct)} buyer penetration, ${money(item.net_sales_value)} net sales, ${pct(item.sales_trend_pct)} H1 trend · ${trendState}`}
                   onClick={() => openSku(item.product_id)}
                 ><span>{item.product_id.slice(0, 3)}</span></button>
               );
             })}
           </div>
-          <div className="chart-legend"><span><i className="legend dot-blue" /> Live SKU</span><span><i className="legend dot-red" /> Return rate above 5%</span><small><BasisTag tone="proxy">Buyer proxy</BasisTag></small></div>
+          <div className="chart-legend"><span><i className="legend dot-red" /> Declining</span><span><i className="legend dot-blue" /> Improving</span><span><i className="legend dot-green" /> Healthy</span><small><BasisTag tone="proxy">Buyer proxy</BasisTag></small></div>
         </article>
       </section>
 
@@ -611,6 +657,23 @@ function SkuView({
   region: string;
 }) {
   const maxMonth = Math.max(...data.monthlySales.map((month) => month.net_sales), 1);
+  const graduatedCount = item.graduated_profile_count ?? 0;
+  const profileMixTotal =
+    item.familiar_profile_count +
+    item.whitespace_trial_profile_count +
+    graduatedCount;
+  const familiarPct = profileMixTotal
+    ? item.familiar_profile_count / profileMixTotal * 100
+    : 0;
+  const whitespacePct = profileMixTotal
+    ? item.whitespace_trial_profile_count / profileMixTotal * 100
+    : 0;
+  const graduatedPct = profileMixTotal
+    ? graduatedCount / profileMixTotal * 100
+    : 0;
+  const donutBackground = profileMixTotal
+    ? `conic-gradient(#3b82f6 0 ${familiarPct}%, #20b486 ${familiarPct}% ${familiarPct + whitespacePct}%, #f59e0b ${familiarPct + whitespacePct}% 100%)`
+    : "#edf2f7";
   return (
     <>
       <section className="sku-hero card">
@@ -680,11 +743,16 @@ function SkuView({
           </div>
         </article>
         <article className="card">
-          <SectionHeader eyebrow="COMMERCIAL REACH" title="Where this SKU sells" subtitle="Live current-filter result." />
-          <div className="rank-list">
-            <div className="rank-row"><span className="rank-number">1</span><div><strong>{region ? regionName(region) : "All territories"}</strong><small>{number(item.sales_region_count)} territories with sales</small></div><div className="rank-meter"><i style={{ width: `${Math.min(item.buyer_penetration_pct ?? 0, 100)}%` }} /></div><b>{pct(item.buyer_penetration_pct)}</b></div>
-            <div className="rank-row"><span className="rank-number">2</span><div><strong>Buyer count</strong><small>Distinct positive purchasers</small></div><div className="rank-meter"><i style={{ width: `${Math.min(item.buyer_penetration_pct ?? 0, 100)}%` }} /></div><b>{number(item.buyer_count)}</b></div>
-            <div className="rank-row"><span className="rank-number">3</span><div><strong>Whitespace</strong><small>Active customers without purchase</small></div><div className="rank-meter"><i style={{ width: `${Math.min(100 - (item.buyer_penetration_pct ?? 0), 100)}%` }} /></div><b>{number(item.whitespace_customers)}</b></div>
+          <SectionHeader eyebrow="ORIGINAL LINE TYPE" title="Recommendation mix" subtitle="SKU profile across live customer-product engine classifications." action={<BasisTag tone="proxy">Engine profile</BasisTag>} />
+          <div className="donut-layout">
+            <div className="donut" style={{ background: donutBackground }}>
+              <span><strong>{number(profileMixTotal)}</strong><small>profile roles</small></span>
+            </div>
+            <ul className="donut-legend">
+              <li><i className="legend dot-blue" /><span>Familiar<small>Replenishment profile</small></span><strong>{profileMixTotal ? pct(familiarPct) : "—"}</strong></li>
+              <li><i className="legend dot-green" /><span>Whitespace trial<small>New-category seed</small></span><strong>{profileMixTotal ? pct(whitespacePct) : "—"}</strong></li>
+              <li><i className="legend dot-amber" /><span>Graduated<small>Previously captured</small></span><strong>{item.graduated_profile_count === null ? "—" : pct(graduatedPct)}</strong></li>
+            </ul>
           </div>
         </article>
         <article className="card">
@@ -736,10 +804,10 @@ function WhitespaceView({
   return (
     <>
       <section className="metric-definition-banner">
-        <div><span>1</span><p><strong>Active buyers</strong><small>Customers with a positive purchase in the selected territory.</small></p></div><i />
-        <div><span>2</span><p><strong>SKU buyers</strong><small>Distinct active customers that purchased this SKU.</small></p></div><i />
-        <div><span>3</span><p><strong>Observed whitespace</strong><small>Active buyers without a positive purchase of the SKU.</small></p></div><i />
-        <div><span>4</span><p><strong>Recommendation capture</strong><small>Blank until exact recommendation outcomes are linked.</small></p></div>
+        <div><span>1</span><p><strong>Eligible whitespace</strong><small>Stored SKU seed for a customer without a category purchase.</small></p></div><i />
+        <div><span>2</span><p><strong>Exposed trial</strong><small>Actually issued as WHITESPACE_TRIAL.</small></p></div><i />
+        <div><span>3</span><p><strong>Captured</strong><small>Positive value on the exact linked invoice.</small></p></div><i />
+        <div><span>4</span><p><strong>Graduated</strong><small>Captured before a later recommendation.</small></p></div>
       </section>
 
       <section className="kpi-grid">
@@ -753,12 +821,12 @@ function WhitespaceView({
 
       <section className="two-column whitespace-lead">
         <article className="card">
-          <SectionHeader eyebrow="OPPORTUNITY CONVERSION" title="Observed reach to recommendation capture" subtitle={`Current scope: ${region ? regionName(region) : "all sales territories"}`} action={<BasisTag tone="proxy">Mixed basis</BasisTag>} />
+          <SectionHeader eyebrow="OPPORTUNITY CONVERSION" title="Stored seed to captured trial" subtitle={`Current scope: ${region ? regionName(region) : "all sales territories"}`} action={<BasisTag tone="proxy">Mixed basis</BasisTag>} />
           <div className="stage-flow">
             {[
-              ["Active buyers", data.summary.activeMarketCustomers, "Observed territory customer base"],
-              ["Visible SKU gaps", visibleGaps, "Customer–SKU purchase gaps"],
-              ["Recommended", null, "Awaiting recommendation exposure rows"],
+              ["Eligible", visibleGaps, "Observed customer–SKU gap proxy"],
+              ["Issued", data.summary.whitespaceTrialLines || null, "Issued WHITESPACE_TRIAL lines"],
+              ["Evaluated", null, "Awaiting linked invoice feedback"],
               ["Captured", null, "Awaiting exact linked outcome"],
             ].map(([label, value, helper], index) => (
               <div key={String(label)} className="stage-node"><div><small>0{index + 1}</small><strong>{value === null ? "—" : number(Number(value))}</strong><span>{label}</span></div><p>{helper}</p></div>
