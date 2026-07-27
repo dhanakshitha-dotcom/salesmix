@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "import:mbew": "node scripts/import-mbew.mjs",
     "start": "next start",
     "test": "node --test tests/product-contract.test.mjs",
     "typecheck": "tsc --noEmit",
@@ -24,6 +25,7 @@
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "csv-parse": "6.1.0",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
     "tailwindcss": "4.2.1",
