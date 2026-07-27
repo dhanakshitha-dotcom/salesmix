@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "import:commercial": "node scripts/import-commercial-data.mjs",
     "import:mbew": "node scripts/import-mbew.mjs",
     "start": "next start",
     "test": "node --test tests/product-contract.test.mjs",

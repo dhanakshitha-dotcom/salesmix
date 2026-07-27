@@ -8,6 +8,7 @@ const DEFAULT_DATA_SERVICE_URL =
 type DashboardRequest = {
   search?: string;
   valuationArea?: string;
+  region?: string;
   limit?: number;
   offset?: number;
 };
@@ -21,6 +22,7 @@ export async function POST(request: Request) {
     const filters = {
       search: String(input.search ?? "").slice(0, 120),
       valuationArea: String(input.valuationArea ?? "").slice(0, 40),
+      region: String(input.region ?? "").slice(0, 120),
       limit: Math.min(Math.max(Number(input.limit) || 50, 1), 200),
       offset: Math.max(Number(input.offset) || 0, 0),
     };

@@ -6,20 +6,29 @@ type Product = {
   product_id: string;
   product_name: string | null;
   category: string | null;
-  valuation_area: string | null;
   valuation_area_count: number;
   valuation_areas: string[];
   valuation_class: string | null;
   price_control: string | null;
-  standard_cost: number | null;
-  moving_average_cost: number | null;
   selected_cost: number | null;
   total_stock: number;
-  total_value: number;
-  has_cost: boolean;
   currency: string | null;
-  net_price: number | null;
-  source_updated_at: string | null;
+  sales_line_count: number;
+  invoice_count: number;
+  buyer_count: number;
+  sales_region_count: number;
+  net_quantity: number;
+  gross_quantity: number;
+  return_quantity: number;
+  net_sales_value: number;
+  gross_sales_value: number;
+  returns_value: number;
+  first_sale_date: string | null;
+  last_sale_date: string | null;
+  observed_unit_price: number | null;
+  return_rate_pct: number | null;
+  buyer_penetration_pct: number | null;
+  whitespace_customers: number;
 };
 
 type DashboardData = {
@@ -35,15 +44,28 @@ type DashboardData = {
     activeProducts: number;
     pricedProducts: number;
     describedProducts: number;
-    sellableProducts: number;
     valuationRows: number;
     stockBearingProducts: number;
     valuationAreas: number;
     customers: number;
     customerLocations: number;
+    salesCustomers: number;
+    geocodedSalesCustomers: number;
+    geoCoveragePct: number | null;
     invoiceLines: number;
+    invoices: number;
     recommendations: number;
-    feedbackRecords?: number;
+    feedbackRecords: number;
+    soldProducts: number;
+    activeMarketCustomers: number;
+    netSales: number;
+    grossSales: number;
+    returnsValue: number;
+    returnRatePct: number | null;
+    netQuantity: number;
+    salesDateFrom: string | null;
+    salesDateTo: string | null;
+    salesRegions: number;
   };
   readiness: {
     valuation: boolean;
@@ -53,7 +75,20 @@ type DashboardData = {
     invoiceSales: boolean;
     recommendationOutcomes: boolean;
   };
+  metricBasis: {
+    sales: string;
+    penetration: string;
+    whitespace: string;
+    recommendationAcceptance: string;
+  };
   valuationAreas: string[];
+  regions: string[];
+  monthlySales: {
+    month: string;
+    gross_sales: number;
+    returns_value: number;
+    net_sales: number;
+  }[];
   products: Product[];
   pagination: {
     total: number;
@@ -67,19 +102,19 @@ const PAGE_SIZE = 50;
 const integer = (value: number) =>
   new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 
-const decimal = (value: number | null, currency?: string | null) => {
+const decimal = (value: number | null, maximumFractionDigits = 2) => {
   if (value === null || !Number.isFinite(value)) return "Not available";
-  if (currency) {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency,
-      maximumFractionDigits: 2,
-    }).format(value);
-  }
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 2,
-  }).format(value);
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits }).format(value);
 };
+
+const percent = (value: number | null) =>
+  value === null || !Number.isFinite(value) ? "Not available" : `${decimal(value, 1)}%`;
+
+const compact = (value: number) =>
+  new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
 
 const dateTime = (value?: string | null) => {
   if (!value) return "Not yet available";
@@ -90,10 +125,15 @@ const dateTime = (value?: string | null) => {
   }).format(new Date(value));
 };
 
+const monthLabel = (value: string) =>
+  new Intl.DateTimeFormat("en-US", { month: "short" }).format(
+    new Date(`${value.slice(0, 10)}T00:00:00Z`),
+  );
+
 function ReadinessPill({
   ready,
   readyLabel = "Connected",
-  waitingLabel = "Awaiting data",
+  waitingLabel = "Awaiting exact link",
 }: {
   ready: boolean;
   readyLabel?: string;
@@ -111,18 +151,16 @@ function MetricCard({
   label,
   value,
   detail,
-  status,
 }: {
   label: string;
   value: string;
   detail: string;
-  status?: "ready" | "waiting";
 }) {
   return (
     <article className="kpi-card live-kpi">
       <div className="kpi-label-row">
         <span>{label}</span>
-        {status && <span className={`metric-state ${status}`}>{status}</span>}
+        <span className="metric-state ready">live</span>
       </div>
       <strong>{value}</strong>
       <p>{detail}</p>
@@ -134,6 +172,7 @@ export default function Home() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [search, setSearch] = useState("");
   const [valuationArea, setValuationArea] = useState("");
+  const [region, setRegion] = useState("");
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -145,7 +184,6 @@ export default function Home() {
     async function load() {
       setLoading(true);
       setError(null);
-
       try {
         const response = await fetch("/api/dashboard", {
           method: "POST",
@@ -153,12 +191,12 @@ export default function Home() {
           body: JSON.stringify({
             search: deferredSearch,
             valuationArea,
+            region,
             limit: PAGE_SIZE,
             offset: page * PAGE_SIZE,
           }),
           signal: controller.signal,
         });
-
         const payload = await response.json();
         if (!response.ok) {
           throw new Error(payload.error || "The live data service did not respond.");
@@ -174,13 +212,10 @@ export default function Home() {
 
     load();
     return () => controller.abort();
-  }, [deferredSearch, page, valuationArea]);
+  }, [deferredSearch, page, region, valuationArea]);
 
   const summary = data?.summary;
-  const totalPages = Math.max(
-    1,
-    Math.ceil((data?.pagination.total ?? 0) / PAGE_SIZE),
-  );
+  const totalPages = Math.max(1, Math.ceil((data?.pagination.total ?? 0) / PAGE_SIZE));
   const visibleRange = useMemo(() => {
     const total = data?.pagination.total ?? 0;
     if (!total) return "0 products";
@@ -188,58 +223,40 @@ export default function Home() {
     const end = Math.min(start + PAGE_SIZE - 1, total);
     return `${integer(start)}–${integer(end)} of ${integer(total)}`;
   }, [data?.pagination.total, page]);
+  const maxMonthlySales = Math.max(
+    1,
+    ...(data?.monthlySales.map((item) => item.gross_sales) ?? [1]),
+  );
 
   return (
     <div className="app-shell live-shell">
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-            <i />
-          </span>
-          <span>
-            <strong>SKU Pulse</strong>
-            <small>Product mix intelligence</small>
-          </span>
+          <span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /></span>
+          <span><strong>SKU Pulse</strong><small>Product mix intelligence</small></span>
         </div>
 
         <nav aria-label="Dashboard sections">
           <p className="nav-label">LIVE VISIBILITY</p>
           <button className="nav-item active">
             <span className="nav-icon" aria-hidden="true">▦</span>
-            <span>
-              <strong>Product master</strong>
-              <small>SKU and valuation coverage</small>
-            </span>
+            <span><strong>SKU performance</strong><small>Sales, reach and whitespace</small></span>
           </button>
-          <button className="nav-item" disabled>
+          <button className="nav-item">
             <span className="nav-icon" aria-hidden="true">⌁</span>
-            <span>
-              <strong>Regional penetration</strong>
-              <small>Awaiting customer locations</small>
-            </span>
+            <span><strong>Regional penetration</strong><small>{data?.regions.length ?? 0} sales territories</small></span>
           </button>
-          <button className="nav-item" disabled>
+          <button className="nav-item">
             <span className="nav-icon" aria-hidden="true">◎</span>
-            <span>
-              <strong>Sales & acceptance</strong>
-              <small>Awaiting invoice lines</small>
-            </span>
+            <span><strong>Sales & returns</strong><small>Six-month invoice history</small></span>
           </button>
         </nav>
 
         <div className="sidebar-status">
-          <div>
-            <span className="connection-dot" />
-            <strong>Live PostgreSQL</strong>
-          </div>
+          <div><span className="connection-dot" /><strong>Live PostgreSQL</strong></div>
           <p>Connected through n8n</p>
           <small>
-            Product valuation refresh
-            <br />
-            {dateTime(data?.latestBatch?.completedAt)}
+            Last valuation refresh<br />{dateTime(data?.latestBatch?.completedAt)}
           </small>
         </div>
       </aside>
@@ -247,154 +264,122 @@ export default function Home() {
       <main>
         <header className="topbar">
           <div className="breadcrumb">
-            <span>SKU Visibility</span>
-            <b>/</b>
-            <strong>Product master</strong>
+            <span>SKU Visibility</span><b>/</b><strong>Commercial performance</strong>
           </div>
           <div className="topbar-actions">
-            <span className="live-data-chip">
-              <i />
-              LIVE DATA
-            </span>
+            <span className="live-data-chip"><i />LIVE DATA</span>
           </div>
         </header>
 
         <section className="live-notice" role="status">
           <span aria-hidden="true">✓</span>
           <p>
-            <strong>Mock data has been removed.</strong> This phase shows the
-            supplied SAP MBEW valuation data from PostgreSQL. Descriptions,
-            regional penetration, sales, and recommendation acceptance remain
-            unavailable until their source tables are loaded.
+            <strong>Sales and geography are now live.</strong> The dashboard uses the
+            supplied direct-dealer invoices, returns, customer locations and SAP
+            valuation data. Recommendation acceptance remains separate until an
+            invoice carries its exact recommendation or cart reference.
           </p>
         </section>
 
         <section className="page-heading live-heading">
           <div>
-            <p className="eyebrow">PRODUCT MASTER · POSTGRESQL SOURCE OF TRUTH</p>
-            <h1>SKU valuation visibility</h1>
+            <p className="eyebrow">SKU PERFORMANCE · JAN–JUN 2026</p>
+            <h1>SKU sales, penetration & whitespace</h1>
             <p>
-              Material-by-material cost and stock coverage, with clear readiness
-              for the commercial measures that will follow.
+              See which products sell, where they reach customers, where white
+              space remains, and how returns affect performance.
             </p>
           </div>
           <div className="freshness">
             <span className="connection-dot" />
-            <span>
-              <strong>{loading ? "Refreshing…" : "Live connection"}</strong>
-              <small>{dateTime(data?.generatedAt)}</small>
-            </span>
+            <span><strong>{loading ? "Refreshing…" : "Live connection"}</strong><small>{dateTime(data?.generatedAt)}</small></span>
           </div>
         </section>
 
         {error && (
           <section className="live-error" role="alert">
-            <strong>Live data is temporarily unavailable.</strong>
-            <span>{error}</span>
+            <strong>Live data is temporarily unavailable.</strong><span>{error}</span>
           </section>
         )}
 
         <section className="kpi-grid live-kpi-grid">
           <MetricCard
-            label="Active material IDs"
-            value={summary ? integer(summary.activeProducts) : "—"}
-            detail="Distinct provisional products in product_master"
-            status={summary ? "ready" : "waiting"}
+            label="Net sales value"
+            value={summary ? compact(summary.netSales) : "—"}
+            detail={region ? `Selected territory: ${region}` : "All direct-dealer sales territories"}
           />
           <MetricCard
-            label="Valuation rows loaded"
-            value={summary ? integer(summary.valuationRows) : "—"}
-            detail="Rows from the supplied MBEW extract"
-            status={data?.readiness.valuation ? "ready" : "waiting"}
+            label="SKUs sold"
+            value={summary ? integer(summary.soldProducts) : "—"}
+            detail={`Of ${integer(summary?.activeProducts ?? 0)} active product records`}
           />
           <MetricCard
-            label="Materials with cost"
-            value={summary ? integer(summary.pricedProducts) : "—"}
-            detail="Moving or standard cost is present"
-            status={data?.readiness.valuation ? "ready" : "waiting"}
+            label="Active buying customers"
+            value={summary ? integer(summary.activeMarketCustomers) : "—"}
+            detail={`${integer(summary?.invoices ?? 0)} invoices in the six-month file`}
           />
           <MetricCard
-            label="Stock-bearing materials"
-            value={summary ? integer(summary.stockBearingProducts) : "—"}
-            detail="Non-zero total stock in the latest valuation load"
-            status={data?.readiness.valuation ? "ready" : "waiting"}
+            label="Returns"
+            value={summary ? compact(summary.returnsValue) : "—"}
+            detail={`${percent(summary?.returnRatePct ?? null)} of gross positive sales value`}
           />
         </section>
 
         <section className="readiness-grid" aria-label="Data readiness">
           <article>
             <span>1</span>
-            <div>
-              <strong>Valuation & cost</strong>
-              <small>MBEW</small>
-            </div>
-            <ReadinessPill ready={Boolean(data?.readiness.valuation)} />
+            <div><strong>Sales & returns</strong><small>{integer(summary?.invoiceLines ?? 0)} invoice lines</small></div>
+            <ReadinessPill ready={Boolean(data?.readiness.invoiceSales)} />
           </article>
           <article>
             <span>2</span>
-            <div>
-              <strong>Descriptions & category</strong>
-              <small>MAKT / MARA</small>
-            </div>
-            <ReadinessPill ready={Boolean(data?.readiness.descriptions)} />
-          </article>
-          <article>
-            <span>3</span>
-            <div>
-              <strong>Regional penetration</strong>
-              <small>Customer locations</small>
-            </div>
+            <div><strong>Territory analysis</strong><small>{summary?.salesRegions ?? 0} sales territories</small></div>
             <ReadinessPill ready={Boolean(data?.readiness.regions)} />
           </article>
           <article>
-            <span>4</span>
-            <div>
-              <strong>Sales & acceptance</strong>
-              <small>Invoice lines + outcomes</small>
-            </div>
+            <span>3</span>
+            <div><strong>Customer geocoding</strong><small>{percent(summary?.geoCoveragePct ?? null)} of sales customers</small></div>
             <ReadinessPill
-              ready={Boolean(
-                data?.readiness.invoiceSales &&
-                  data?.readiness.recommendationOutcomes,
-              )}
+              ready={Boolean(summary && summary.geoCoveragePct === 100)}
+              readyLabel="Complete"
+              waitingLabel={`${percent(summary?.geoCoveragePct ?? null)} covered`}
             />
+          </article>
+          <article>
+            <span>4</span>
+            <div><strong>Recommendation acceptance</strong><small>Needs cart / recommendation ID on invoice</small></div>
+            <ReadinessPill ready={Boolean(data?.readiness.recommendationOutcomes)} />
           </article>
         </section>
 
         <section className="live-filter-panel" aria-label="Product filters">
           <label className="live-search">
-            <span>Search material</span>
+            <span>Search SKU</span>
             <input
               type="search"
               value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setPage(0);
-              }}
-              placeholder="Enter material ID"
+              onChange={(event) => { setSearch(event.target.value); setPage(0); }}
+              placeholder="Enter SKU or product description"
             />
+          </label>
+          <label>
+            <span>Sales territory</span>
+            <select
+              value={region}
+              onChange={(event) => { setRegion(event.target.value); setPage(0); }}
+            >
+              <option value="">All sales territories</option>
+              {(data?.regions ?? []).map((item) => <option value={item} key={item}>{item}</option>)}
+            </select>
           </label>
           <label>
             <span>Valuation area</span>
             <select
               value={valuationArea}
-              onChange={(event) => {
-                setValuationArea(event.target.value);
-                setPage(0);
-              }}
+              onChange={(event) => { setValuationArea(event.target.value); setPage(0); }}
             >
               <option value="">All valuation areas</option>
-              {(data?.valuationAreas ?? []).map((area) => (
-                <option value={area} key={area}>
-                  {area}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Region</span>
-            <select disabled value="">
-              <option value="">Awaiting customer locations</option>
+              {(data?.valuationAreas ?? []).map((area) => <option value={area} key={area}>{area}</option>)}
             </select>
           </label>
           <div className="filter-result">
@@ -403,96 +388,117 @@ export default function Home() {
           </div>
         </section>
 
+        <section className="commercial-grid">
+          <article className="card sales-trend-card">
+            <div className="section-header">
+              <div>
+                <p className="eyebrow">SALES TREND</p>
+                <h2>Monthly net sales value</h2>
+                <p>Positive sales less returns, using the source file&apos;s value field.</p>
+              </div>
+              <ReadinessPill ready={Boolean(data?.readiness.invoiceSales)} readyLabel="6 months" />
+            </div>
+            <div className="monthly-bars">
+              {(data?.monthlySales ?? []).map((item) => (
+                <div className="month-column" key={item.month}>
+                  <strong>{compact(item.net_sales)}</strong>
+                  <div className="bar-track">
+                    <i style={{ height: `${Math.max(8, (item.net_sales / maxMonthlySales) * 100)}%` }} />
+                  </div>
+                  <span>{monthLabel(item.month)}</span>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="card metric-basis-card">
+            <p className="eyebrow">MEASUREMENT BASIS</p>
+            <h2>What penetration means here</h2>
+            <p>
+              Buyer penetration is the share of active direct-dealer customers in
+              the selected territory that purchased a SKU. White space is the
+              remaining active buying customers without a positive purchase.
+            </p>
+            <div className="basis-stat">
+              <strong>{integer(summary?.geocodedSalesCustomers ?? 0)} / {integer(summary?.salesCustomers ?? 0)}</strong>
+              <span>sales customers have coordinates</span>
+            </div>
+            <small>
+              This is observed customer penetration, not total local-market outlet
+              penetration. Full market sizing needs an authoritative outlet universe.
+            </small>
+          </article>
+        </section>
+
         <section className="card live-product-card">
           <div className="section-header">
             <div>
               <p className="eyebrow">SKU DETAIL</p>
-              <h2>Product valuation register</h2>
+              <h2>Commercial SKU register</h2>
               <p>
-                Cost is normalized by SAP price unit. Selling price, GP,
-                penetration, sales, and recommendation success are intentionally
-                blank until their source data is available.
+                Products are ranked by net sales value. Territory selection recalculates
+                buyers, penetration, whitespace, sales and returns.
               </p>
             </div>
-            <ReadinessPill
-              ready={Boolean(data?.readiness.valuation)}
-              readyLabel="Live MBEW"
-            />
+            <ReadinessPill ready={Boolean(data?.readiness.invoiceSales)} readyLabel="Live invoices" />
           </div>
 
           <div className="table-scroll">
-            <table className="live-product-table">
+            <table className="live-product-table commercial-table">
               <thead>
                 <tr>
-                  <th>Material</th>
-                  <th>Description</th>
-                  <th>Valuation areas</th>
-                  <th>Class / control</th>
-                  <th>Selected cost</th>
-                  <th>Total stock</th>
-                  <th>Local sales</th>
-                  <th>Mix acceptance</th>
+                  <th>SKU / description</th>
+                  <th>Net sales</th>
+                  <th>Net quantity</th>
+                  <th>Buyers / penetration</th>
+                  <th>White space</th>
+                  <th>Returns</th>
+                  <th>Stock / selected cost</th>
+                  <th>Recommendation acceptance</th>
                 </tr>
               </thead>
               <tbody>
                 {loading && !data ? (
-                  <tr>
-                    <td colSpan={8} className="table-message">Loading live products…</td>
-                  </tr>
+                  <tr><td colSpan={8} className="table-message">Loading live products…</td></tr>
                 ) : data?.products.length ? (
                   data.products.map((product) => (
                     <tr key={product.product_id}>
                       <td>
                         <strong className="material-id">{product.product_id}</strong>
-                        <small>{product.category || "Category pending"}</small>
+                        <small>{product.product_name || "Description not observed in invoice data"}</small>
                       </td>
                       <td>
-                        {product.product_name || (
-                          <span className="pending-value">Awaiting MAKT</span>
-                        )}
+                        <strong>{decimal(product.net_sales_value)}</strong>
+                        <small>{integer(product.invoice_count)} invoices</small>
                       </td>
                       <td>
-                        <strong>{integer(product.valuation_area_count)}</strong>
-                        <small>
-                          {product.valuation_areas.slice(0, 3).join(", ") ||
-                            product.valuation_area ||
-                            "Not assigned"}
-                        </small>
+                        <strong>{decimal(product.net_quantity, 0)}</strong>
+                        <small>{decimal(product.return_quantity, 0)} returned</small>
                       </td>
                       <td>
-                        <strong>{product.valuation_class || "—"}</strong>
-                        <small>
-                          {product.price_control === "S"
-                            ? "Standard price"
-                            : product.price_control === "V"
-                              ? "Moving average"
-                              : "Control pending"}
-                        </small>
+                        <strong>{integer(product.buyer_count)} buyers</strong>
+                        <small>{percent(product.buyer_penetration_pct)} observed penetration</small>
                       </td>
                       <td>
-                        <strong>
-                          {decimal(product.selected_cost, product.currency)}
-                        </strong>
-                        <small>Per normalized price unit</small>
+                        <strong>{integer(product.whitespace_customers)}</strong>
+                        <small>active customers without purchase</small>
+                      </td>
+                      <td>
+                        <strong>{decimal(product.returns_value)}</strong>
+                        <small>{percent(product.return_rate_pct)} of gross sales</small>
                       </td>
                       <td>
                         <strong>{decimal(product.total_stock)}</strong>
-                        <small>Across loaded valuation areas</small>
+                        <small>Cost {decimal(product.selected_cost)}</small>
                       </td>
                       <td>
-                        <span className="pending-value">Awaiting invoices</span>
-                      </td>
-                      <td>
-                        <span className="pending-value">Awaiting outcomes</span>
+                        <span className="pending-value">Exact link required</span>
+                        <small>No inferred acceptance</small>
                       </td>
                     </tr>
                   ))
                 ) : (
-                  <tr>
-                    <td colSpan={8} className="table-message">
-                      No materials match these filters.
-                    </td>
-                  </tr>
+                  <tr><td colSpan={8} className="table-message">No products match these filters.</td></tr>
                 )}
               </tbody>
             </table>
@@ -501,30 +507,16 @@ export default function Home() {
           <div className="live-pagination">
             <span>{visibleRange}</span>
             <div>
-              <button
-                onClick={() => setPage((current) => Math.max(0, current - 1))}
-                disabled={page === 0 || loading}
-              >
-                Previous
-              </button>
-              <strong>
-                Page {page + 1} of {totalPages}
-              </strong>
-              <button
-                onClick={() =>
-                  setPage((current) => Math.min(totalPages - 1, current + 1))
-                }
-                disabled={page >= totalPages - 1 || loading}
-              >
-                Next
-              </button>
+              <button onClick={() => setPage((current) => Math.max(0, current - 1))} disabled={page === 0 || loading}>Previous</button>
+              <strong>Page {page + 1} of {totalPages}</strong>
+              <button onClick={() => setPage((current) => Math.min(totalPages - 1, current + 1))} disabled={page >= totalPages - 1 || loading}>Next</button>
             </div>
           </div>
         </section>
 
         <footer>
-          <span>SKU Pulse · Live PostgreSQL product valuation</span>
-          <span>No mock metrics · No product-level outcome inference</span>
+          <span>SKU Pulse · Live PostgreSQL sales, geography and valuation</span>
+          <span>No mock metrics · No inferred recommendation acceptance</span>
         </footer>
       </main>
     </div>
