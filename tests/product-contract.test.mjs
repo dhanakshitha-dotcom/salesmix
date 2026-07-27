@@ -13,13 +13,18 @@ test("preserves the SKU Pulse live-data and metric-honesty contract", async () =
     readFile(new URL("../netlify.toml", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /Sales and geography are now live/);
-  assert.match(page, /SKU sales, penetration & whitespace/);
+  assert.match(page, /Live source:/);
+  assert.match(page, /Portfolio overview/);
+  assert.match(page, /SKU 360/);
+  assert.match(page, /Whitespace & penetration/);
+  assert.match(page, /Regional performance/);
+  assert.match(page, /Model & data health/);
   assert.match(page, /All sales territories/);
-  assert.match(page, /Buyer penetration is the share/);
-  assert.match(page, /Exact link required/);
-  assert.match(page, /No mock metrics · No inferred recommendation acceptance/);
+  assert.match(page, /Recommendation acceptance/);
+  assert.match(page, /Unavailable fields remain blank/);
+  assert.match(page, /No exact recommendation evidence is stored/);
   assert.doesNotMatch(page, /const\s+(?:products|skus|portfolioData)\s*=\s*\[/i);
+  assert.doesNotMatch(page, /DEMO DATA|Transparent demo|realistic sample data/i);
   assert.match(route, /N8N_SKU_VISIBILITY_WEBHOOK_URL/);
   assert.match(route, /cache: "no-store"/);
   assert.match(route, /request_b64/);
