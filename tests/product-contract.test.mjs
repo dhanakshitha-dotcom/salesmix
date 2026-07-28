@@ -57,3 +57,60 @@ test("includes the deployable assets and PostgreSQL analytics contract", async (
   await assert.rejects(access(new URL(".openai/hosting.json", projectRoot)));
   await assert.rejects(access(new URL("worker/index.ts", projectRoot)));
 });
+
+test("keeps the executive dashboard and adds governed departmental views", async () => {
+  const [page, departmentViews] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/department-views.ts", import.meta.url), "utf8"),
+  ]);
+
+  for (const role of [
+    "Executive overview",
+    "Sales Head",
+    "Sales Agent",
+    "R&D",
+    "Finance",
+  ]) {
+    assert.match(departmentViews, new RegExp(role.replace("&", "\\&")));
+  }
+
+  assert.match(page, /aria-label="Dashboard view"/);
+  assert.match(page, /DepartmentWorkspace/);
+  assert.match(page, /Suggested next steps/i);
+  assert.match(page, /How it helps/);
+  assert.match(page, /PostgreSQL tables → n8n intelligence workflows/);
+  assert.match(page, /Familiar/);
+  assert.match(page, /Whitespace trial/);
+  assert.match(page, /Graduated/);
+  assert.match(page, /Gross profit remains unavailable/);
+  assert.match(page, /NOT A CONFIRMED DEFECT/i);
+  assert.doesNotMatch(page, /fetch\(["']https?:\/\/.*postgres/i);
+});
+
+test("assigns every executive-visible field to at least one department", async () => {
+  const source = await readFile(
+    new URL("../app/department-views.ts", import.meta.url),
+    "utf8",
+  );
+  const executiveBlock = source.match(
+    /export const EXECUTIVE_VISIBLE_FIELDS = \[([\s\S]*?)\] as const;/,
+  );
+  assert.ok(executiveBlock, "Executive field list must be present");
+
+  const ownershipBlock = source.match(
+    /export const DEPARTMENT_FIELD_OWNERSHIP[\s\S]*?= \{([\s\S]*?)\n\};/,
+  );
+  assert.ok(ownershipBlock, "Department field ownership map must be present");
+
+  const strings = (value) =>
+    [...value.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  const executiveFields = strings(executiveBlock[1]);
+  const ownedFields = new Set(strings(ownershipBlock[1]));
+  const uncovered = executiveFields.filter((field) => !ownedFields.has(field));
+
+  assert.deepEqual(
+    uncovered,
+    [],
+    `Executive-visible fields without a department owner: ${uncovered.join(", ")}`,
+  );
+});
