@@ -51,6 +51,12 @@ type Summary = {
   activeProducts: number;
   pricedProducts: number;
   describedProducts: number;
+  categorizedProducts: number;
+  salesUnitProducts: number;
+  grossMarginProducts: number;
+  activeProfiles: number;
+  learningStates: number;
+  activeModelVersion: string | null;
   valuationRows: number;
   stockBearingProducts: number;
   valuationAreas: number;
@@ -118,6 +124,8 @@ type DashboardData = {
     sellingPrices: boolean;
     regions: boolean;
     invoiceSales: boolean;
+    profiles: boolean;
+    grossMargin: boolean;
     recommendationOutcomes: boolean;
   };
   valuationAreas: string[];
@@ -990,7 +998,7 @@ function HealthView({ data }: { data: DashboardData }) {
       <section className="health-hero live-health">
         <div className="health-state">
           <span className="health-icon health-ok" aria-hidden="true">✓</span>
-          <div><p className="eyebrow">ENVIRONMENT STATE</p><h2>Live PostgreSQL connected through n8n</h2><p>Sales, returns, customer geography and SAP valuation are live. Recommendation outcomes and some master-data dimensions remain blank.</p></div>
+          <div><p className="eyebrow">ENVIRONMENT STATE</p><h2>Live PostgreSQL connected through n8n</h2><p>Sales, returns, geography, valuation, product-mix profiles and issued recommendations are live. Unsupported fields remain blank.</p></div>
         </div>
         <div className="health-meta">
           <div><span>API refreshed</span><strong>{dateTime(data.generatedAt)}</strong></div>
@@ -1002,22 +1010,24 @@ function HealthView({ data }: { data: DashboardData }) {
       <section className="kpi-grid">
         <KpiCard label="Invoice lines" value={number(summary.invoiceLines)} detail={`${number(summary.invoices)} invoices`} tone="positive" basis="CONNECTED" />
         <KpiCard label="Products" value={number(summary.activeProducts)} detail={`${number(summary.describedProducts)} invoice-observed descriptions`} basis="PRODUCT MASTER" />
-        <KpiCard label="Sales customers" value={number(summary.salesCustomers)} detail={`${number(summary.activeMarketCustomers)} active positive buyers`} basis="CUSTOMER MASTER" />
+        <KpiCard label="Product-mix profiles" value={number(summary.activeProfiles)} detail={`${number(summary.learningStates)} learning states · ${summary.activeModelVersion ?? "No active model"}`} tone={readiness.profiles ? "positive" : "warning"} basis="MODEL ENGINE" />
         <KpiCard label="Geography coverage" value={pct(summary.geoCoveragePct)} detail={`${number(summary.geocodedSalesCustomers)} geocoded sales customers`} tone={summary.geoCoveragePct === 100 ? "positive" : "warning"} basis="PARTIAL" />
         <KpiCard label="Recommendation feedback" value={number(summary.feedbackRecords)} detail="Exact outcomes stay blank until linked rows arrive" tone="warning" basis="EMPTY TABLE" />
-        <KpiCard label="Valuation rows" value={number(summary.valuationRows)} detail={`${number(summary.pricedProducts)} products with cost`} tone="positive" basis="SAP MBEW" />
+        <KpiCard label="Valuation rows" value={number(summary.valuationRows)} detail={`${number(summary.pricedProducts)} products with valuation cost`} tone="positive" basis="SAP MBEW" />
       </section>
 
       <section className="health-columns">
         <article className="card">
-          <SectionHeader eyebrow="RELEASE GATE" title="Production readiness" subtitle="Current state of the original application data contract." action={<span className="gate-pill">2 PARTIAL · 2 BLANK</span>} />
+          <SectionHeader eyebrow="RELEASE GATE" title="Production readiness" subtitle="Current state of the original application data contract." action={<span className="gate-pill">LIVE · GAPS VISIBLE</span>} />
           <div className="checklist">
             {[
               ["Live PostgreSQL schema", "Ready", "Operational tables and dashboard query were validated."],
               ["Sales & return invoices", "Ready", `${number(summary.invoiceLines)} lines reconcile to the supplied file.`],
               ["SAP valuation", "Ready", `${number(summary.valuationRows)} MBEW rows are loaded.`],
+              ["Product-mix engine", "Ready", `${number(summary.activeProfiles)} active customer profiles and ${number(summary.recommendations)} issued cart are stored.`],
               ["Customer geography", "Pending", `${pct(summary.geoCoveragePct)} of sales customers currently have coordinates.`],
               ["Recommendation outcomes", "Blocked", "No exact cart / recommendation / invoice links are stored."],
+              ["GP and order UOM", "Blocked", "Cost currency and governed sales UOM are not supplied, so GP and UOM stay blank."],
               ["Authoritative outlet universe", "Blocked", "Required for true local-market penetration."],
             ].map(([title, state, detail]) => (
               <div className="check-row" key={title}>
@@ -1032,7 +1042,9 @@ function HealthView({ data }: { data: DashboardData }) {
           <SectionHeader eyebrow="DATA CONTRACT" title="Metric availability" subtitle="Unavailable fields remain blank in every view." />
           <div className="availability-list">
             <div><BasisTag>Exact now</BasisTag><p><strong>ERP invoice sales & returns</strong><small>Signed line values and quantities</small></p><b>Available</b></div>
-            <div><BasisTag>Exact now</BasisTag><p><strong>SAP stock & cost</strong><small>Latest loaded MBEW valuation extract</small></p><b>Available</b></div>
+            <div><BasisTag>Exact now</BasisTag><p><strong>Product-mix profiles</strong><small>Familiar, whitespace trial and issued cart lines</small></p><b>Available</b></div>
+            <div><BasisTag tone="proxy">Proxy</BasisTag><p><strong>Selling price</strong><small>Six-month weighted invoice average; not current list price</small></p><b>Directional</b></div>
+            <div><BasisTag tone="missing">Blank</BasisTag><p><strong>Gross margin</strong><small>Cost currency is absent, so invoice price and valuation cost are not compared</small></p><b>Unavailable</b></div>
             <div><BasisTag tone="proxy">Proxy</BasisTag><p><strong>Observed buyer penetration</strong><small>SKU buyers / active direct-dealer buyers</small></p><b>Directional</b></div>
             <div><BasisTag tone="proxy">Proxy</BasisTag><p><strong>Observed whitespace</strong><small>Active buyers without a positive SKU purchase</small></p><b>Directional</b></div>
             <div><BasisTag tone="missing">Blank</BasisTag><p><strong>Recommendation acceptance</strong><small>Needs exact cart_id and rec_id on invoice feedback</small></p><b>Unavailable</b></div>
@@ -1049,8 +1061,9 @@ function HealthView({ data }: { data: DashboardData }) {
             <thead><tr><th>Severity</th><th>Issue</th><th>Affected records</th><th>Metric impact</th><th>Recommended action</th><th>Status</th></tr></thead>
             <tbody>
               <tr><td><span className="severity severity-high">High</span></td><td><strong>Recommendation outcome linkage absent</strong><small>invoice_feedback has no linked rows</small></td><td>{number(summary.feedbackRecords)}</td><td>Acceptance & capture</td><td>Persist cart_id and rec_id with invoice outcome</td><td>{readiness.recommendationOutcomes ? "Resolved" : "Open"}</td></tr>
+              <tr><td><span className="severity severity-high">High</span></td><td><strong>GP basis unavailable</strong><small>MBEW cost currency and invoice currency are not supplied</small></td><td>{number(summary.grossMarginProducts)}</td><td>Margin & GP ranking</td><td>Load governed currency-compatible price and cost</td><td>{readiness.grossMargin ? "Resolved" : "Open"}</td></tr>
               <tr><td><span className="severity severity-medium">Medium</span></td><td><strong>Customer coordinates incomplete</strong><small>Sales customers without geography</small></td><td>{number(summary.salesCustomers - summary.geocodedSalesCustomers)}</td><td>Map completeness</td><td>Load the remaining customer locations</td><td>Open</td></tr>
-              <tr><td><span className="severity severity-medium">Medium</span></td><td><strong>Category and UOM blank</strong><small>Invoice export supplies product descriptions only</small></td><td>{number(summary.activeProducts)}</td><td>Category filtering</td><td>Load authoritative product attributes</td><td>Open</td></tr>
+              <tr><td><span className="severity severity-medium">Medium</span></td><td><strong>Product attributes incomplete</strong><small>{number(summary.categorizedProducts)} products categorized; {number(summary.salesUnitProducts)} have governed sales UOM</small></td><td>{number(summary.activeProducts - summary.categorizedProducts)}</td><td>Category & order sizing</td><td>Load authoritative category, UOM and lifecycle fields</td><td>Open</td></tr>
               <tr><td><span className="severity severity-low">Low</span></td><td><strong>Unassigned sales territory</strong><small>Source contains “Not assigned” rows</small></td><td>1 territory</td><td>Regional attribution</td><td>Resolve source territory assignment</td><td>Open</td></tr>
             </tbody>
           </table>
@@ -1061,7 +1074,7 @@ function HealthView({ data }: { data: DashboardData }) {
         <SectionHeader eyebrow="DATA READINESS" title="Connections needed for the complete platform" subtitle="The application is live now; these sources progressively populate its remaining blank fields." />
         <div>
           {[
-            ["01", "Sales, returns & valuation", "Connected PostgreSQL invoice and SAP MBEW data", "Live"],
+            ["01", "Sales, returns, valuation & model", "PostgreSQL invoices, SAP MBEW, active profiles and issued carts", "Live"],
             ["02", "Remaining customer geography", "Complete the 54 currently ungeocoded sales customers", "Partial"],
             ["03", "Recommendation outcome linkage", "Exact cart, recommendation and invoice IDs", "Required"],
             ["04", "Product attributes", "Category, UOM, lifecycle and governed selling price", "Required"],
