@@ -391,7 +391,11 @@ export default function Home() {
               </button>
             ))
           ) : (
-            <button className="nav-item active department-nav-item" aria-current="page">
+            <button
+              className="nav-item active department-nav-item"
+              aria-current="page"
+              aria-label={`${departmentMeta.shortLabel} decision workspace`}
+            >
               <span className="nav-icon" aria-hidden="true">{departmentMeta.icon}</span>
               <span><strong>{departmentMeta.shortLabel}</strong><small>Decision workspace</small></span>
             </button>
