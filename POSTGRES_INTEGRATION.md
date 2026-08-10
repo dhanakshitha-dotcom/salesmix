@@ -5,6 +5,17 @@ This dashboard uses an isolated `sales_analytics` schema over the existing
 [`sql/analytics_marts.sql`](sql/analytics_marts.sql). It does not rebuild the
 engine, change recommendation logic, or write to operational transactions.
 
+## Current production path
+
+As of 2026-08-10, the Netlify dashboard reads the active n8n Dashboard Data API,
+which queries `sales_intelligence` directly for live operational visibility.
+The Learning Service has successfully persisted an exact sales-app outcome to
+`invoice_feedback`, `cart_line_actions`, `customer_learning_state`, and the
+evaluated recommendation cart. The Data API exposes the linked order header,
+SKU line performance, whitespace capture, action reasons, regional rollups and
+portfolio rollups. The `sales_analytics` marts below remain the governed
+long-term reporting contract; they are not required for the live UI response.
+
 ## What was validated from the saved workflows
 
 The saved PostgreSQL workflows establish these contracts:
@@ -27,10 +38,11 @@ The saved PostgreSQL workflows establish these contracts:
 - `model_runs` is written for each validation/batch event. It is not yet one
   governed logical model-build row.
 
-No live PostgreSQL DDL, rows, row counts, indexes, model execution history, or
-ERP coverage denominator was supplied. The export was saved on 2026-07-22; the
-PostgreSQL recommendation, learning, and analytics workflows were inactive
-staging workflows at that time.
+The original workflow export was saved on 2026-07-22. Live workflow and API
+validation performed on 2026-08-10 supersedes its inactive staging status for
+the Recommendation, Learning and Dashboard Data API services. The authoritative
+addressable outlet denominator is still not supplied, so true local-market
+penetration remains unavailable.
 
 ## Live-DDL gate
 

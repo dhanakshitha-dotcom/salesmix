@@ -49,6 +49,27 @@ type Product = {
   familiar_profile_count: number;
   whitespace_trial_profile_count: number;
   graduated_profile_count: number | null;
+  recommendation_outcome_count: number;
+  evaluated_recommendation_lines: number;
+  accepted_recommendation_lines: number;
+  recommendation_acceptance_pct: number | null;
+  recommendation_target_value: number;
+  recommendation_actual_value: number;
+  average_attainment_pct: number | null;
+  evaluated_trial_count: number;
+  captured_trial_count: number;
+  trial_capture_pct: number | null;
+  latest_verdict: string | null;
+  latest_cart_id: string | null;
+  latest_rec_id: string | null;
+  latest_invoice_id: string | null;
+  latest_customer_id: string | null;
+  latest_outcome_region: string | null;
+  latest_evaluated_at: string | null;
+  latest_latency_days: number | null;
+  latest_action_type: string | null;
+  latest_reason_code: string | null;
+  latest_reason_note: string | null;
 };
 
 type Summary = {
@@ -77,6 +98,25 @@ type Summary = {
   graduatedLines: number;
   recommendedValue: number;
   feedbackRecords: number;
+  evaluatedRecommendations: number;
+  evaluatedRecommendationLines: number;
+  acceptedRecommendationLines: number;
+  recommendationAcceptancePct: number | null;
+  evaluatedRecommendationValue: number;
+  acceptedRecommendationValue: number;
+  evaluatedInvoiceValue: number;
+  avgAdherencePct: number | null;
+  avgTargetAttainmentPct: number | null;
+  evaluatedTrialLines: number;
+  capturedTrialLines: number;
+  trialCapturePct: number | null;
+  avgCaptureRatePct: number | null;
+  fullCaptureOutcomes: number;
+  partialCaptureOutcomes: number;
+  targetMostlyAchievedOutcomes: number;
+  replenishOnlyOutcomes: number;
+  ignoredOutcomes: number;
+  cartActionRecords: number;
   soldProducts: number;
   activeMarketCustomers: number;
   netSales: number;
@@ -110,6 +150,68 @@ type RegionalSummary = {
   return_rate_pct: number | null;
   sales_date_from: string | null;
   sales_date_to: string | null;
+  feedback_records: number;
+  evaluated_recommendation_lines: number;
+  accepted_recommendation_lines: number;
+  recommendation_acceptance_pct: number | null;
+  evaluated_trial_lines: number;
+  captured_trial_lines: number;
+  trial_capture_pct: number | null;
+};
+
+type RecommendationLineOutcome = {
+  productId: string;
+  productName: string | null;
+  category: string | null;
+  lineType: string;
+  targetValue: number;
+  actualValue: number;
+  attainmentPct: number | null;
+};
+
+type CartAction = {
+  productId: string;
+  recommendedUnits: number | null;
+  finalUnits: number | null;
+  recommendedValue: number | null;
+  finalValue: number | null;
+  actionType: string | null;
+  reasonCode: string | null;
+  reasonNote: string | null;
+  createdAt: string | null;
+};
+
+type RecommendationOutcome = {
+  invoice_id: string;
+  customer_id: string;
+  cart_id: string;
+  rec_id: string;
+  sales_agent_id: string | null;
+  region_label: string;
+  issued_at: string | null;
+  expires_at: string | null;
+  evaluated_at: string;
+  invoice_date: string;
+  latency_days: number | null;
+  invoice_value: number;
+  recommended_target_value: number;
+  adherence_pct: number | null;
+  target_attainment_pct: number | null;
+  capture_rate_pct: number | null;
+  verdict: string;
+  whitespace_offered: string[];
+  whitespace_captured: string[];
+  captured_categories: string[];
+  line_performance: RecommendationLineOutcome[];
+  cart_actions: CartAction[];
+};
+
+type NonAcceptanceReason = {
+  reason_code: string;
+  reason_note: string | null;
+  action_count: number;
+  customers: number;
+  products: number;
 };
 
 type DashboardData = {
@@ -136,6 +238,8 @@ type DashboardData = {
   regions: string[];
   monthlySales: MonthlySale[];
   regionalSummary: RegionalSummary[];
+  recommendationOutcomes: RecommendationOutcome[];
+  nonAcceptanceReasons: NonAcceptanceReason[];
   products: Product[];
   pagination: { total: number; limit: number; offset: number };
 };
@@ -194,6 +298,29 @@ const dateTime = (value?: string | null) =>
 
 const regionName = (value: string) =>
   value === "# | Not assigned" ? "Not assigned" : value.split("|").at(-1)?.trim() || value;
+
+const outcomeLabel = (value?: string | null) =>
+  value ? value.toLowerCase().split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") : "—";
+
+const skuOutcomeRows = (data: DashboardData, productId: string) =>
+  data.recommendationOutcomes.flatMap((outcome) =>
+    outcome.line_performance
+      .filter((line) => line.productId === productId)
+      .map((line) => ({
+        outcome,
+        line,
+        action: outcome.cart_actions.find((action) => action.productId === productId) ?? null,
+      })),
+  );
+
+const heatOutcome = (data: DashboardData, region: string, productId: string) => {
+  const lines = data.recommendationOutcomes
+    .filter((outcome) => outcome.region_label === region)
+    .flatMap((outcome) => outcome.line_performance)
+    .filter((line) => line.productId === productId);
+  if (!lines.length) return null;
+  return 100 * lines.filter((line) => line.actualValue > 0).length / lines.length;
+};
 
 function BasisTag({
   children,
@@ -442,7 +569,7 @@ export default function Home() {
 
         <section className="demo-notice live-source-notice" role="note">
           <span aria-hidden="true">✓</span>
-          <p><strong>Live source:</strong> Sales, returns, customer geography and SAP valuation are read from PostgreSQL through n8n. Empty recommendation measures are intentionally left blank until exact cart and recommendation links arrive.</p>
+          <p><strong>Live source:</strong> Sales, returns, customer geography, SAP valuation, product-mix recommendations and linked sales-app outcomes are read from PostgreSQL through n8n. Measures without a governed source remain blank.</p>
           <button onClick={() => { setDepartmentView("executive"); setView("health"); }}>Review data coverage →</button>
         </section>
 
@@ -555,17 +682,29 @@ function PortfolioView({
   const { summary } = data;
   const maxSales = Math.max(...items.map((item) => item.net_sales_value), 1);
   const trendValues = data.monthlySales.map((item) => item.net_sales);
+  const evaluatedLineWidth = summary.recommendationLines
+    ? 100 * summary.evaluatedRecommendationLines / summary.recommendationLines
+    : 0;
+  const acceptedLineWidth = summary.recommendationLines
+    ? 100 * summary.acceptedRecommendationLines / summary.recommendationLines
+    : 0;
+  const evaluatedValueWidth = summary.recommendedValue
+    ? 100 * summary.evaluatedRecommendationValue / summary.recommendedValue
+    : 0;
+  const acceptedValueWidth = summary.recommendedValue
+    ? 100 * summary.acceptedRecommendationValue / summary.recommendedValue
+    : 0;
   const journeyRows: [string, number | null, number, string][] = metricMode === "count"
     ? [
         ["Recommended", summary.recommendationLines || null, 100, "All issued recommendation lines"],
-        ["Evaluated", null, 68, "Awaiting linked invoice feedback"],
-        ["Invoice accepted", null, 42, "Awaiting exact cart / recommendation linkage"],
+        ["Evaluated", summary.evaluatedRecommendationLines, evaluatedLineWidth, "Exact SKU lines evaluated by the Learning workflow"],
+        ["Invoice accepted", summary.acceptedRecommendationLines, acceptedLineWidth, "Evaluated lines with positive linked invoice value"],
         ["Repeat purchase", null, 18, "Awaiting a linked follow-up purchase"],
       ]
     : [
         ["Recommended", summary.recommendedValue || null, 100, "Planned mix value from issued carts"],
-        ["Evaluated", null, 68, "Awaiting linked invoice feedback"],
-        ["Invoice accepted", null, 42, "Awaiting exact matched invoice value"],
+        ["Evaluated", summary.evaluatedRecommendationValue, evaluatedValueWidth, "Recommended value in exact evaluated feedback"],
+        ["Invoice accepted", summary.acceptedRecommendationValue, acceptedValueWidth, "Actual value on the linked invoice"],
         ["Repeat purchase", null, 18, "Awaiting a linked follow-up purchase"],
       ];
   return (
@@ -573,7 +712,7 @@ function PortfolioView({
       <div className="basis-strip">
         <div><BasisTag>Exact ERP invoice measures</BasisTag><span>Sales · returns · invoices · quantities</span></div>
         <div><BasisTag tone="proxy">Observed customer proxy</BasisTag><span>Buyer penetration and whitespace within active direct dealers</span></div>
-        <div><BasisTag tone="missing">Awaiting exact linkage</BasisTag><span>Recommendation exposure, acceptance and capture</span></div>
+        <div><BasisTag>Exact outcome linkage</BasisTag><span>Cart, recommendation, invoice, SKU acceptance and capture</span></div>
       </div>
 
       <section className="kpi-grid">
@@ -581,7 +720,7 @@ function PortfolioView({
         <KpiCard label="Active buyers" value={number(summary.activeMarketCustomers)} detail={`${number(summary.invoices)} invoices in scope`} tone="positive" basis="DISTINCT CUSTOMERS" />
         <KpiCard label="Net sales" value={money(summary.netSales)} detail={`${money(summary.grossSales)} gross positive value`} tone="positive" basis="ERP DIRECT DEALER" />
         <KpiCard label="Returns" value={money(summary.returnsValue)} detail={`${pct(summary.returnRatePct)} of gross sales value`} tone={summary.returnRatePct && summary.returnRatePct > 5 ? "warning" : "neutral"} basis="SIGNED RETURNS" />
-        <KpiCard label="Recommendation acceptance" value="—" detail="No exact cart / recommendation link in invoice data" basis="AWAITING DATA" />
+        <KpiCard label="Recommendation acceptance" value={pct(summary.recommendationAcceptancePct)} detail={`${number(summary.acceptedRecommendationLines)} of ${number(summary.evaluatedRecommendationLines)} evaluated SKU lines`} tone="positive" basis="EXACT LINKED OUTCOMES" />
         <KpiCard label="Customer geocoding" value={pct(summary.geoCoveragePct)} detail={`${number(summary.geocodedSalesCustomers)} of ${number(summary.salesCustomers)} sales customers`} basis="LOCATION COVERAGE" />
       </section>
 
@@ -590,7 +729,7 @@ function PortfolioView({
           <SectionHeader
             eyebrow="RECOMMENDATION JOURNEY"
             title="From exposure to repeat sell-in"
-            subtitle="Unavailable outcome stages remain blank and are never inferred from sales."
+            subtitle="Exact evaluated and accepted stages come from sales-app feedback; repeat purchase remains blank until a later linked order."
             action={
               <div className="segmented" aria-label="Funnel metric mode">
                 <button className={metricMode === "count" ? "active" : ""} onClick={() => setMetricMode("count")} aria-pressed={metricMode === "count"}>Line count</button>
@@ -661,10 +800,10 @@ function PortfolioView({
               {items.map((item) => (
                 <tr key={item.product_id}>
                   <td><button className="sku-cell" onClick={() => openSku(item.product_id)}><span>{item.product_id.slice(0, 2)}</span><b>{item.product_name || "Description unavailable"}<small>{item.product_id} · {item.category || "Category blank"}</small></b></button></td>
-                  <td><Blank label="Awaiting outcome link" /></td>
+                  <td>{item.evaluated_recommendation_lines ? <><strong>{outcomeLabel(item.latest_verdict)}</strong><small>{money(item.recommendation_actual_value)} actual</small></> : <Blank label="Not evaluated" />}</td>
                   <td><strong>{number(item.invoice_count)}</strong><small>{number(item.sales_line_count)} lines</small></td>
                   <td><strong>{number(item.net_quantity)}</strong><small>{number(item.return_quantity)} returned</small></td>
-                  <td><strong>—</strong><small>cart / rec ID required</small></td>
+                  <td><strong>{pct(item.recommendation_acceptance_pct)}</strong><small>{number(item.accepted_recommendation_lines)} / {number(item.evaluated_recommendation_lines)} lines</small></td>
                   <td><strong>{money(item.returns_value)}</strong><small>{pct(item.return_rate_pct)} of gross</small></td>
                   <td><strong>{number(item.whitespace_customers)}</strong><small>active customers without purchase</small></td>
                   <td><strong>{pct(item.buyer_penetration_pct)}</strong><small>{number(item.buyer_count)} buyers</small></td>
@@ -680,7 +819,7 @@ function PortfolioView({
       </section>
 
       <section className="card table-card matrix-card">
-        <SectionHeader eyebrow="REGION × SKU" title="Acceptance heatmap" subtitle="The original matrix remains in place; cells stay blank until exact recommendation outcomes are stored." action={<BasisTag tone="missing">Awaiting linkage</BasisTag>} />
+        <SectionHeader eyebrow="REGION × SKU" title="Acceptance heatmap" subtitle="Exact linked acceptance by SKU and sales territory; unevaluated combinations remain blank." action={<BasisTag>Linked outcomes</BasisTag>} />
         <div className="table-scroll">
           <table className="heatmap">
             <caption>Recommendation acceptance by SKU and sales territory</caption>
@@ -688,14 +827,39 @@ function PortfolioView({
             <tbody>
               {(region ? [region] : data.regions.slice(0, 8)).map((regionItem) => (
                 <tr key={regionItem}>
-                  <th>{regionName(regionItem)}<small>outcomes not linked</small></th>
-                  {items.slice(0, 6).map((item) => <td key={item.product_id}><span className="heat-cell heat-empty">—</span></td>)}
-                  <td><Blank /></td>
+                  <th>{regionName(regionItem)}<small>{number(data.regionalSummary.find((row) => row.region_label === regionItem)?.feedback_records)} evaluated order</small></th>
+                  {items.slice(0, 6).map((item) => {
+                    const acceptance = heatOutcome(data, regionItem, item.product_id);
+                    return <td key={item.product_id}><span className={`heat-cell ${acceptance === null ? "heat-empty" : acceptance >= 67 ? "heat-high" : acceptance > 0 ? "heat-mid" : "heat-low"}`}>{pct(acceptance)}</span></td>;
+                  })}
+                  <td><strong>{pct(data.regionalSummary.find((row) => row.region_label === regionItem)?.recommendation_acceptance_pct)}</strong></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className="two-column outcome-overview">
+        <article className="card">
+          <SectionHeader eyebrow="SALES-APP FEEDBACK" title="Recent recommendation outcomes" subtitle="Every currently linked order returned by the Learning workflow." action={<BasisTag>{number(data.recommendationOutcomes.length)} outcome</BasisTag>} />
+          <div className="availability-list compact-availability">
+            {data.recommendationOutcomes.length ? data.recommendationOutcomes.map((outcome) => (
+              <div key={outcome.invoice_id}>
+                <p><strong>{outcomeLabel(outcome.verdict)}</strong><small>{outcome.customer_id} · {outcome.invoice_id} · {regionName(outcome.region_label)}</small></p>
+                <b>{money(outcome.invoice_value)}<small>{pct(outcome.target_attainment_pct)} target attainment · {pct(outcome.capture_rate_pct)} trial capture</small></b>
+              </div>
+            )) : <div><p><strong>No evaluated recommendation</strong><small>Future linked outcomes will appear automatically.</small></p><b>—</b></div>}
+          </div>
+        </article>
+        <article className="card">
+          <SectionHeader eyebrow="LEARNING SIGNAL" title="Recorded non-acceptance reasons" subtitle="Sales-app reasons persisted through n8n for mix improvement." action={<BasisTag>Exact feedback</BasisTag>} />
+          <div className="reason-list">
+            {data.nonAcceptanceReasons.length ? data.nonAcceptanceReasons.map((reason) => (
+              <div key={reason.reason_code}><span><strong>{reason.reason_note || outcomeLabel(reason.reason_code)}</strong><b>{number(reason.action_count)}</b></span><i><em style={{ width: `${Math.min(100, 20 + reason.action_count * 20)}%` }} /></i></div>
+            )) : <div><span><strong>No removal reason recorded in this scope</strong><b>—</b></span><i><em style={{ width: "0%" }} /></i></div>}
+          </div>
+        </article>
       </section>
     </>
   );
@@ -715,6 +879,12 @@ function SkuView({
   region: string;
 }) {
   const maxMonth = Math.max(...data.monthlySales.map((month) => month.net_sales), 1);
+  const evidence = skuOutcomeRows(data, item.product_id);
+  const latestEvidence = evidence[0];
+  const outcomeReasons = evidence
+    .map((row) => row.action)
+    .filter((action): action is CartAction => Boolean(action?.reasonCode));
+  const maxConversionValue = Math.max(item.recommendation_target_value, item.recommendation_actual_value, 1);
   const graduatedCount = item.graduated_profile_count ?? 0;
   const profileMixTotal =
     item.familiar_profile_count +
@@ -752,14 +922,14 @@ function SkuView({
           <select id="sku-select" value={item.product_id} onChange={(event) => setSelectedSkuId(event.target.value)}>
             {items.map((sku) => <option value={sku.product_id} key={sku.product_id}>{sku.product_id} · {sku.product_name || "No description"}</option>)}
           </select>
-          <Blank label="Acceptance pending" />
+          {item.evaluated_recommendation_lines ? <BasisTag>{pct(item.recommendation_acceptance_pct)} accepted</BasisTag> : <Blank label="Not evaluated" />}
         </div>
       </section>
 
       <div className="basis-strip">
         <div><BasisTag>Sales: exact</BasisTag><span>{number(item.invoice_count)} invoices · {money(item.net_sales_value)} net sales</span></div>
         <div><BasisTag tone="proxy">Penetration: observed</BasisTag><span>{number(item.buyer_count)} SKU buyers / {number(data.summary.activeMarketCustomers)} active buyers</span></div>
-        <div><BasisTag tone="missing">Acceptance blank</BasisTag><span>Invoice does not contain exact recommendation identity</span></div>
+        <div><BasisTag>Outcome: exact</BasisTag><span>{number(item.evaluated_recommendation_lines)} linked line · {outcomeLabel(item.latest_verdict)}</span></div>
       </div>
 
       <section className="kpi-grid sku-kpis">
@@ -768,16 +938,20 @@ function SkuView({
         <KpiCard label="Buyer penetration" value={pct(item.buyer_penetration_pct)} detail={`${number(item.buyer_count)} active SKU buyers`} basis="OBSERVED PROXY" />
         <KpiCard label="Whitespace customers" value={number(item.whitespace_customers)} detail="Active customers without a positive purchase" basis="OBSERVED PROXY" />
         <KpiCard label="Returns" value={money(item.returns_value)} detail={`${pct(item.return_rate_pct)} of gross sales`} tone={item.return_rate_pct && item.return_rate_pct > 5 ? "warning" : "neutral"} basis="ERP RETURN" />
-        <KpiCard label="Recommendation acceptance" value="—" detail="Requires exact cart_id / rec_id linkage" basis="AWAITING DATA" />
+        <KpiCard label="Recommendation acceptance" value={pct(item.recommendation_acceptance_pct)} detail={`${money(item.recommendation_actual_value)} actual vs ${money(item.recommendation_target_value)} target`} tone={item.recommendation_acceptance_pct === null ? "neutral" : item.recommendation_acceptance_pct > 0 ? "positive" : "warning"} basis="EXACT LINKED OUTCOME" />
       </section>
 
       <section className="two-column sku-charts">
         <article className="card">
-          <SectionHeader eyebrow="TRAJECTORY" title="Recommendation conversion" subtitle="The original conversion chart remains blank until linked outcomes exist." action={<BasisTag tone="missing">No outcome fact</BasisTag>} />
-          <div className="column-chart blank-chart" aria-label="Recommendation conversion unavailable">
-            {[0, 0, 0, 0, 0, 0].map((_, index) => <div key={index}><span>—</span><i style={{ height: "6%" }} /><small>M{index + 1}</small></div>)}
+          <SectionHeader eyebrow="TRAJECTORY" title="Recommendation conversion" subtitle="Target and actual value from exact cart → recommendation → invoice evidence." action={item.evaluated_recommendation_lines ? <BasisTag>Exact outcome</BasisTag> : <BasisTag tone="missing">Not evaluated</BasisTag>} />
+          <div className={`column-chart ${item.evaluated_recommendation_lines ? "" : "blank-chart"}`} aria-label="Recommendation target and actual conversion">
+            {[
+              ["Target", item.evaluated_recommendation_lines ? item.recommendation_target_value : null],
+              ["Actual", item.evaluated_recommendation_lines ? item.recommendation_actual_value : null],
+              ["Attain.", item.average_attainment_pct],
+            ].map(([label, value]) => <div key={String(label)}><span>{value === null ? "—" : label === "Attain." ? pct(Number(value)) : money(Number(value))}</span><i style={{ height: value === null ? "6%" : `${Math.max(Math.min(Number(value) / (label === "Attain." ? 250 : maxConversionValue) * 100, 100), 8)}%` }} /><small>{label}</small></div>)}
           </div>
-          <div className="chart-summary"><span><i className="legend dot-blue" /> Acceptance rate</span><strong>— <small>awaiting linkage</small></strong></div>
+          <div className="chart-summary"><span><i className="legend dot-blue" /> Acceptance rate</span><strong>{pct(item.recommendation_acceptance_pct)} <small>{number(item.accepted_recommendation_lines)} of {number(item.evaluated_recommendation_lines)} lines</small></strong></div>
         </article>
         <article className="card">
           <SectionHeader eyebrow="LIVE INVOICES" title="Portfolio sell-in trend" subtitle={`Selected territory: ${region ? regionName(region) : "all sales territories"}. SKU-month detail is not yet materialized.`} action={<BasisTag>Live territory total</BasisTag>} />
@@ -814,30 +988,42 @@ function SkuView({
           </div>
         </article>
         <article className="card">
-          <SectionHeader eyebrow="NON-ACCEPTANCE" title="Recorded reasons" subtitle="No action or reason records are currently linked." action={<BasisTag tone="missing">Blank</BasisTag>} />
+          <SectionHeader eyebrow="NON-ACCEPTANCE" title="Recorded reasons" subtitle="Reasons captured by the sales app for this SKU." action={outcomeReasons.length ? <BasisTag>Exact feedback</BasisTag> : <BasisTag tone="missing">No reason recorded</BasisTag>} />
           <div className="reason-list">
-            {["Price above expectation", "Existing stock on hand", "Customer declined trial", "UOM / pack-size mismatch", "Other / no reason"].map((label) => (
-              <div key={label}><span><strong>{label}</strong><b>—</b></span><i><em style={{ width: "0%" }} /></i></div>
-            ))}
+            {outcomeReasons.length ? outcomeReasons.map((action, index) => (
+              <div key={`${action.productId}-${index}`}><span><strong>{action.reasonNote || outcomeLabel(action.reasonCode)}</strong><b>{number(1)}</b></span><i><em style={{ width: "100%" }} /></i></div>
+            )) : <div><span><strong>No non-acceptance reason for this SKU</strong><b>—</b></span><i><em style={{ width: "0%" }} /></i></div>}
           </div>
         </article>
       </section>
 
       <section className="card table-card">
-        <SectionHeader eyebrow="AUDIT TRAIL" title="Recommendation evidence" subtitle={`Exact cart + recommendation + customer evidence for ${item.product_id}.`} action={<BasisTag tone="missing">No linked rows</BasisTag>} />
+        <SectionHeader eyebrow="AUDIT TRAIL" title="Recommendation evidence" subtitle={`Exact cart + recommendation + customer evidence for ${item.product_id}.`} action={evidence.length ? <BasisTag>{number(evidence.length)} linked row</BasisTag> : <BasisTag tone="missing">No linked rows</BasisTag>} />
         <div className="table-scroll">
           <table><caption>Recommendation-to-invoice evidence</caption><thead><tr><th>Cart / recommendation</th><th>SKU</th><th>Customer</th><th>Region</th><th>Line type</th><th>Target</th><th>Actual</th><th>Outcome</th><th>Latency</th></tr></thead>
-            <tbody><tr><td colSpan={9} className="empty-table-cell">No exact recommendation evidence is stored for this SKU yet.</td></tr></tbody>
+            <tbody>{evidence.length ? evidence.map(({ outcome, line, action }) => (
+              <tr key={`${outcome.invoice_id}-${line.productId}`}>
+                <td><strong>{outcome.cart_id}</strong><small>{outcome.rec_id}</small></td>
+                <td><strong>{line.productId}</strong><small>{line.productName || "—"}</small></td>
+                <td><strong>{outcome.customer_id}</strong><small>{outcome.invoice_id}</small></td>
+                <td>{regionName(outcome.region_label)}</td>
+                <td>{outcomeLabel(line.lineType)}</td>
+                <td>{money(line.targetValue)}</td>
+                <td>{money(line.actualValue)}</td>
+                <td><strong>{line.actualValue > 0 ? "Accepted" : outcomeLabel(action?.actionType || "Not accepted")}</strong><small>{action?.reasonNote || outcomeLabel(outcome.verdict)}</small></td>
+                <td>{decimal(outcome.latency_days)} days</td>
+              </tr>
+            )) : <tr><td colSpan={9} className="empty-table-cell">No exact recommendation evidence is stored for this SKU yet.</td></tr>}</tbody>
           </table>
         </div>
-        <div className="table-foot"><span>Fields remain blank until invoice_feedback links invoice_id, cart_id and rec_id.</span><BasisTag tone="missing">Not inferred</BasisTag></div>
+        <div className="table-foot"><span>{evidence.length ? `Latest evaluation ${dateTime(latestEvidence?.outcome.evaluated_at)} · values are exact linked evidence.` : "This SKU has not yet received linked feedback."}</span><BasisTag>{evidence.length ? "Not inferred" : "Unevaluated"}</BasisTag></div>
       </section>
 
       <section className="provenance-card">
         <div><span aria-hidden="true">⌘</span><p><strong>Data provenance</strong><small>Direct-dealer invoice export · {shortDate(item.first_sale_date)}–{shortDate(item.last_sale_date)}</small></p></div>
         <div><span>Pricing</span><strong>Observed invoice value</strong></div>
         <div><span>Category</span><strong>{item.category || "Blank"}</strong></div>
-        <div><span>Outcome confidence</span><strong>No linked evidence</strong></div>
+        <div><span>Outcome confidence</span><strong>{evidence.length ? "Exact linked evidence" : "No linked evidence"}</strong></div>
       </section>
     </>
   );
@@ -859,6 +1045,15 @@ function WhitespaceView({
   const averagePenetration = penetrations.length
     ? penetrations.reduce((sum, value) => sum + value, 0) / penetrations.length
     : null;
+  const trialEvidence = data.recommendationOutcomes.flatMap((outcome) =>
+    outcome.line_performance
+      .filter((line) => line.lineType === "WHITESPACE_TRIAL")
+      .map((line) => ({
+        outcome,
+        line,
+        action: outcome.cart_actions.find((action) => action.productId === line.productId) ?? null,
+      })),
+  );
   return (
     <>
       <section className="metric-definition-banner">
@@ -873,7 +1068,7 @@ function WhitespaceView({
         <KpiCard label="Visible customer–SKU gaps" value={number(visibleGaps)} detail={`Across the ${number(items.length)} displayed SKUs`} basis="SUM OF SKU GAPS" />
         <KpiCard label="Average buyer penetration" value={pct(averagePenetration)} detail="Simple average across displayed SKUs" basis="OBSERVED PROXY" />
         <KpiCard label="Geocoded sales customers" value={number(data.summary.geocodedSalesCustomers)} detail={`${pct(data.summary.geoCoveragePct)} overall coverage`} basis="CUSTOMER LOCATION" />
-        <KpiCard label="Captured trials" value="—" detail="Recommendation outcome table is empty" basis="AWAITING DATA" />
+        <KpiCard label="Captured trials" value={number(data.summary.capturedTrialLines)} detail={`${pct(data.summary.trialCapturePct)} of ${number(data.summary.evaluatedTrialLines)} evaluated trials`} tone="positive" basis="EXACT LINKED OUTCOME" />
         <KpiCard label="Addressable penetration" value="—" detail="Authoritative local outlet universe is not connected" basis="ADDITIONAL DATA" />
       </section>
 
@@ -884,8 +1079,8 @@ function WhitespaceView({
             {[
               ["Eligible", visibleGaps, "Observed customer–SKU gap proxy"],
               ["Issued", data.summary.whitespaceTrialLines || null, "Issued WHITESPACE_TRIAL lines"],
-              ["Evaluated", null, "Awaiting linked invoice feedback"],
-              ["Captured", null, "Awaiting exact linked outcome"],
+              ["Evaluated", data.summary.evaluatedTrialLines, "Exact trial lines evaluated by Learning"],
+              ["Captured", data.summary.capturedTrialLines, "Positive value on the linked invoice"],
             ].map(([label, value, helper], index) => (
               <div key={String(label)} className="stage-node"><div><small>0{index + 1}</small><strong>{value === null ? "—" : number(Number(value))}</strong><span>{label}</span></div><p>{helper}</p></div>
             ))}
@@ -922,7 +1117,7 @@ function WhitespaceView({
                 <td><strong>{number(item.buyer_count)}</strong><small>positive purchasers</small></td>
                 <td><span className={`opportunity-cell opp-${item.whitespace_customers >= 150 ? "high" : item.whitespace_customers >= 75 ? "mid" : "low"}`}><strong>{number(item.whitespace_customers)}</strong><small>without purchase</small></span></td>
                 <td><strong>{pct(item.buyer_penetration_pct)}</strong><small>observed basis</small></td>
-                <td><Blank /></td>
+                <td><strong>{pct(item.trial_capture_pct)}</strong><small>{number(item.captured_trial_count)} / {number(item.evaluated_trial_count)} evaluated</small></td>
                 <td><button className="row-arrow" onClick={() => openSku(item.product_id)} aria-label={`Open ${item.product_name || item.product_id}`}>→</button></td>
               </tr>
             ))}</tbody>
@@ -931,8 +1126,8 @@ function WhitespaceView({
       </section>
 
       <section className="card table-card">
-        <SectionHeader eyebrow="CUSTOMER DRILLDOWN" title="Priority outlet opportunities" subtitle="Customer-level SKU opportunity rows are not yet materialized in PostgreSQL." action={<BasisTag tone="missing">Blank</BasisTag>} />
-        <div className="table-scroll"><table><caption>Customer-level whitespace opportunities</caption><thead><tr><th>Customer</th><th>Region / cluster</th><th>Seed SKU</th><th>Peer penetration</th><th>Score</th><th>Capture state</th><th>Cooldown</th><th>Sales agent</th></tr></thead><tbody><tr><td colSpan={8} className="empty-table-cell">No customer-level recommendation opportunity rows are available yet.</td></tr></tbody></table></div>
+        <SectionHeader eyebrow="CUSTOMER DRILLDOWN" title="Evaluated outlet trials" subtitle="Customer-level whitespace trials returned by the sales app and Learning workflow." action={trialEvidence.length ? <BasisTag>Exact evidence</BasisTag> : <BasisTag tone="missing">No evaluated trials</BasisTag>} />
+        <div className="table-scroll"><table><caption>Customer-level whitespace trial outcomes</caption><thead><tr><th>Customer</th><th>Region / cluster</th><th>Seed SKU</th><th>Target</th><th>Actual</th><th>Capture state</th><th>Reason</th><th>Sales agent</th></tr></thead><tbody>{trialEvidence.length ? trialEvidence.map(({ outcome, line, action }) => <tr key={`${outcome.invoice_id}-${line.productId}`}><td><strong>{outcome.customer_id}</strong><small>{outcome.invoice_id}</small></td><td>{regionName(outcome.region_label)}</td><td><strong>{line.productId}</strong><small>{line.productName || "—"}</small></td><td>{money(line.targetValue)}</td><td>{money(line.actualValue)}</td><td><strong>{line.actualValue > 0 ? "Captured" : "Not captured"}</strong><small>{pct(line.attainmentPct)}</small></td><td>{action?.reasonNote || "—"}</td><td>{outcome.sales_agent_id || "—"}</td></tr>) : <tr><td colSpan={8} className="empty-table-cell">No evaluated customer-level trial is available in this scope yet.</td></tr>}</tbody></table></div>
       </section>
 
       <section className="unavailable-panel">
@@ -959,20 +1154,25 @@ function RegionalView({
       invoices: sum.invoices + item.invoices,
       lines: sum.lines + item.invoice_lines,
       buyers: sum.buyers + item.active_buyers,
+      evaluated: sum.evaluated + item.evaluated_recommendation_lines,
+      accepted: sum.accepted + item.accepted_recommendation_lines,
+      trials: sum.trials + item.evaluated_trial_lines,
+      captured: sum.captured + item.captured_trial_lines,
     }),
-    { sales: 0, returns: 0, invoices: 0, lines: 0, buyers: 0 },
+    { sales: 0, returns: 0, invoices: 0, lines: 0, buyers: 0, evaluated: 0, accepted: 0, trials: 0, captured: 0 },
   );
+  const regionalAcceptance = totals.evaluated ? 100 * totals.accepted / totals.evaluated : null;
   return (
     <>
       <div className="basis-strip">
         <div><BasisTag>Sales: exact</BasisTag><span>ERP direct-dealer invoices grouped by territory</span></div>
         <div><BasisTag tone="proxy">Buyer reach: observed</BasisTag><span>Distinct positive purchasers inside each territory</span></div>
-        <div><BasisTag tone="missing">Acceptance blank</BasisTag><span>No exact recommendation-to-invoice linkage</span></div>
+        <div><BasisTag>Acceptance: exact</BasisTag><span>Linked cart → recommendation → invoice outcomes by territory</span></div>
       </div>
 
       <section className="kpi-grid">
         <KpiCard label="Regions in scope" value={number(regions.length)} detail={`${number(data.summary.salesRegions)} available sales territories`} basis="SALES TERRITORY" />
-        <KpiCard label="Regional acceptance" value="—" detail="Exact recommendation outcomes are not linked" basis="AWAITING DATA" />
+        <KpiCard label="Regional acceptance" value={pct(regionalAcceptance)} detail={`${number(totals.accepted)} of ${number(totals.evaluated)} evaluated SKU lines`} tone="positive" basis="EXACT LINKED OUTCOME" />
         <KpiCard label="Active buyers" value={number(totals.buyers)} detail="Summed territory-level distinct buyers" basis="OBSERVED" />
         <KpiCard label="Net sales" value={money(totals.sales)} detail={`${number(totals.invoices)} invoices`} tone="positive" basis="ERP INVOICE" />
         <KpiCard label="Returns" value={money(totals.returns)} detail={`${number(totals.lines)} invoice lines`} basis="SIGNED RETURN" />
@@ -988,7 +1188,7 @@ function RegionalView({
               <div><span>Sold SKUs</span><strong>{number(item.sold_products)}</strong></div>
               <div><span>Active buyers</span><strong>{number(item.active_buyers)}</strong></div>
               <div><span>Geocoded buyers</span><strong>{number(item.geocoded_buyers)}</strong></div>
-              <div><span>Acceptance</span><strong>—</strong></div>
+              <div><span>Acceptance</span><strong>{pct(item.recommendation_acceptance_pct)}</strong></div>
             </div>
             <div className="region-bar"><i style={{ width: `${Math.max(item.net_sales / maxSales * 100, 2)}%` }} /></div>
           </article>
@@ -997,7 +1197,7 @@ function RegionalView({
 
       <section className="two-column regional-analysis">
         <article className="card">
-          <SectionHeader eyebrow="REGIONAL COMPARISON" title="Net sales and return rate" subtitle="Live sales performance; recommendation acceptance remains blank." action={<BasisTag>Exact sales</BasisTag>} />
+          <SectionHeader eyebrow="REGIONAL COMPARISON" title="Net sales and return rate" subtitle="Live sales performance alongside exact linked recommendation outcomes." action={<BasisTag>Exact sales</BasisTag>} />
           <div className="comparison-bars">
             {regions.map((item) => (
               <div key={item.region_label}>
@@ -1010,8 +1210,13 @@ function RegionalView({
           <div className="chart-legend"><span><i className="legend dot-blue" /> Net sales</span><span><i className="legend dot-green" /> Return rate</span></div>
         </article>
         <article className="card">
-          <SectionHeader eyebrow="SALES EXECUTION" title="Agent conversion signal" subtitle="Sales-rep names and linked recommendation outcomes are not available." />
-          <div className="empty-visual"><Blank label="Awaiting sales-rep master and recommendation outcomes" /></div>
+          <SectionHeader eyebrow="SALES EXECUTION" title="Outcome conversion signal" subtitle="Linked outcome totals are live; sales-rep identity remains blank when the source does not supply it." />
+          <div className="availability-list compact-availability">
+            <div><p><strong>Evaluated lines</strong><small>{number(data.summary.evaluatedRecommendations)} evaluated recommendation</small></p><b>{number(totals.evaluated)}</b></div>
+            <div><p><strong>Accepted lines</strong><small>Positive linked invoice value</small></p><b>{number(totals.accepted)}</b></div>
+            <div><p><strong>Trial capture</strong><small>{number(totals.captured)} of {number(totals.trials)} evaluated</small></p><b>{totals.trials ? pct(100 * totals.captured / totals.trials) : "—"}</b></div>
+            <div><p><strong>Sales agent</strong><small>Not supplied on current outcome</small></p><b>—</b></div>
+          </div>
         </article>
       </section>
 
@@ -1024,7 +1229,7 @@ function RegionalView({
             <tbody>{regions.map((item) => (
               <tr key={item.region_label}>
                 <td><strong>{regionName(item.region_label)}</strong><small>{item.region_label.split("|")[0].trim()}</small></td>
-                <td><Blank /></td>
+                <td><strong>{pct(item.recommendation_acceptance_pct)}</strong><small>{number(item.accepted_recommendation_lines)} / {number(item.evaluated_recommendation_lines)} lines</small></td>
                 <td><strong>{number(item.invoice_lines)}</strong><small>{number(item.invoices)} invoices</small></td>
                 <td><strong>{number(item.active_buyers)}</strong><small>positive purchasers</small></td>
                 <td><strong>{number(item.sold_products)}</strong><small>positive sales</small></td>
@@ -1129,11 +1334,15 @@ function buildSuggestedActions(
       },
       {
         tone: "control",
-        label: "FIX EVIDENCE",
-        title: "Recommendation outcomes are not linked",
+        label: data.readiness.recommendationOutcomes ? "SCALE EVIDENCE" : "FIX EVIDENCE",
+        title: data.readiness.recommendationOutcomes ? "Outcome learning is live" : "Recommendation outcomes are not linked",
         signal: `${number(data.summary.recommendations)} issued cart · ${number(data.summary.feedbackRecords)} linked outcomes`,
-        action: "Require cart_id and rec_id on the resulting invoice feedback before measuring acceptance.",
-        impact: "Turns Sales execution into auditable learning without inferring success.",
+        action: data.readiness.recommendationOutcomes
+          ? "Keep submitting every sales-app result with cart, recommendation, invoice and SKU IDs; investigate the recorded non-acceptance reasons."
+          : "Require cart_id and rec_id on the resulting invoice feedback before measuring acceptance.",
+        impact: data.readiness.recommendationOutcomes
+          ? "Expands the exact evidence base used by acceptance reporting and future product mixes."
+          : "Turns Sales execution into auditable learning without inferring success.",
         basis: "Recommendation + Learning workflows",
       },
     ];
@@ -1171,9 +1380,11 @@ function buildSuggestedActions(
       {
         tone: "control",
         label: "RECORD",
-        title: "Outcome evidence is still blank",
+        title: data.readiness.recommendationOutcomes ? "Continue exact outcome capture" : "Outcome evidence is still blank",
         signal: `${number(data.summary.recommendationLines)} issued lines · ${number(data.summary.feedbackRecords)} evaluated outcomes`,
-        action: "Preserve customer, cart, recommendation, SKU and line-type IDs when submitting the invoice result.",
+        action: data.readiness.recommendationOutcomes
+          ? "Review captured and removed lines, then preserve the same exact identifiers on every submitted sales result."
+          : "Preserve customer, cart, recommendation, SKU and line-type IDs when submitting the invoice result.",
         impact: "Enables acceptance reporting and lets the Learning workflow improve future mixes.",
         basis: "Recommendation + Learning workflows",
       },
@@ -1484,13 +1695,13 @@ function SalesHeadWorkspace({
       <section className="two-column department-lead-grid">
         <DepartmentScatter items={items} openSku={openSku} />
         <article className="card recommendation-ledger">
-          <SectionHeader eyebrow="RECOMMENDATION EXECUTION" title="Mix pipeline" subtitle="Planned value remains pipeline until exact invoice linkage." />
+          <SectionHeader eyebrow="RECOMMENDATION EXECUTION" title="Mix pipeline" subtitle="Issued mix and exact sales-app outcomes from the shared PostgreSQL workflow." />
           <div className="role-stage-grid">
             <div><span>Issued carts</span><strong>{number(summary.recommendations)}</strong><small>{number(summary.recommendationLines)} lines</small></div>
             <div><span>Whitespace trials</span><strong>{number(summary.whitespaceTrialLines)}</strong><small>engine-selected seeds</small></div>
             <div><span>Graduated</span><strong>{number(summary.graduatedLines)}</strong><small>stored profile lines</small></div>
             <div><span>Planned value</span><strong>{money(summary.recommendedValue)}</strong><small>not realised revenue</small></div>
-            <div className="stage-blank"><span>Acceptance</span><strong>—</strong><small>{number(summary.feedbackRecords)} linked outcomes</small></div>
+            <div><span>Acceptance</span><strong>{pct(summary.recommendationAcceptancePct)}</strong><small>{number(summary.acceptedRecommendationLines)} / {number(summary.evaluatedRecommendationLines)} evaluated lines</small></div>
           </div>
         </article>
       </section>
@@ -1500,7 +1711,7 @@ function SalesHeadWorkspace({
         <div className="table-scroll">
           <table>
             <caption>Sales Head regional decision table</caption>
-            <thead><tr><th>Region</th><th>Net sales</th><th>Invoices</th><th>Active buyers</th><th>Sold SKUs</th><th>Returns</th><th>Return rate</th><th>Geo coverage</th></tr></thead>
+            <thead><tr><th>Region</th><th>Net sales</th><th>Invoices</th><th>Active buyers</th><th>Sold SKUs</th><th>Returns</th><th>Return rate</th><th>Acceptance</th><th>Geo coverage</th></tr></thead>
             <tbody>{data.regionalSummary.map((item) => (
               <tr key={item.region_label}>
                 <td><strong>{regionName(item.region_label)}</strong><small>{item.region_label.split("|")[0].trim()}</small></td>
@@ -1510,6 +1721,7 @@ function SalesHeadWorkspace({
                 <td><strong>{number(item.sold_products)}</strong></td>
                 <td><strong>{money(item.returns_value)}</strong></td>
                 <td><strong>{pct(item.return_rate_pct)}</strong></td>
+                <td><strong>{pct(item.recommendation_acceptance_pct)}</strong><small>{number(item.feedback_records)} evaluated order</small></td>
                 <td><strong>{item.active_buyers ? pct(item.geocoded_buyers / item.active_buyers * 100) : "—"}</strong><small>{number(item.geocoded_buyers)} geocoded</small></td>
               </tr>
             ))}</tbody>
@@ -1521,7 +1733,7 @@ function SalesHeadWorkspace({
         <div className="table-scroll">
           <table>
             <caption>Sales Head SKU decision table</caption>
-            <thead><tr><th>SKU</th><th>Trend</th><th>Net sales</th><th>Invoices / lines</th><th>Net / return qty</th><th>Buyer reach</th><th>Whitespace</th><th>Returns</th><th>Profile mix</th><th>Stock</th></tr></thead>
+            <thead><tr><th>SKU</th><th>Trend</th><th>Net sales</th><th>Invoices / lines</th><th>Net / return qty</th><th>Buyer reach</th><th>Whitespace</th><th>Returns</th><th>Profile mix</th><th>Outcome</th><th>Stock</th></tr></thead>
             <tbody>{items.slice(0, 60).map((item) => (
               <tr key={item.product_id}>
                 <td><button className="sku-cell" onClick={() => openSku(item.product_id)}><span>{item.product_id.slice(0, 2)}</span><b>{item.product_name || "Description unavailable"}<small>{item.product_id} · {item.category || "Category blank"}</small></b></button></td>
@@ -1533,6 +1745,7 @@ function SalesHeadWorkspace({
                 <td><strong>{number(item.whitespace_customers)}</strong></td>
                 <td><strong>{money(item.returns_value)}</strong><small>{pct(item.return_rate_pct)}</small></td>
                 <td><strong>{number(item.familiar_profile_count)} / {number(item.whitespace_trial_profile_count)} / {number(item.graduated_profile_count)}</strong><small>Familiar / Trial / Graduated</small></td>
+                <td><strong>{pct(item.recommendation_acceptance_pct)}</strong><small>{item.latest_reason_note || outcomeLabel(item.latest_verdict)}</small></td>
                 <td><strong>{decimal(item.total_stock)}</strong><small>{number(item.sales_region_count)} sales regions</small></td>
               </tr>
             ))}</tbody>
@@ -1560,6 +1773,8 @@ function SalesAgentWorkspace({
   actions: SuggestedAction[];
   region: string;
 }) {
+  const selectedEvidence = skuOutcomeRows(data, selectedItem.product_id);
+  const latestOutcome = selectedEvidence[0];
   return (
     <>
       <DepartmentSkuSelector item={selectedItem} items={items} setSelectedSkuId={setSelectedSkuId} />
@@ -1569,7 +1784,7 @@ function SalesAgentWorkspace({
         <KpiCard label="Buyer reach" value={pct(selectedItem.buyer_penetration_pct)} detail={`${number(selectedItem.buyer_count)} buyers`} basis="OBSERVED PROXY" />
         <KpiCard label="Whitespace" value={number(selectedItem.whitespace_customers)} detail={`${region ? regionName(region) : "All territories"} active-customer gap`} basis="NEXT CALLS" />
         <KpiCard label="Stock" value={decimal(selectedItem.total_stock)} detail={`${money(selectedItem.observed_unit_price)} historical unit value`} basis="CHECK BEFORE QUOTE" />
-        <KpiCard label="Recommendation outcome" value="—" detail={`${number(data.summary.recommendationLines)} issued lines · exact link required`} basis="AWAITING FEEDBACK" />
+        <KpiCard label="Recommendation outcome" value={pct(selectedItem.recommendation_acceptance_pct)} detail={selectedItem.evaluated_recommendation_lines ? `${outcomeLabel(selectedItem.latest_verdict)} · ${money(selectedItem.recommendation_actual_value)} actual` : "This SKU has not been evaluated yet"} tone={selectedItem.recommendation_acceptance_pct === null ? "neutral" : selectedItem.recommendation_acceptance_pct > 0 ? "positive" : "warning"} basis="EXACT SALES-APP FEEDBACK" />
       </section>
       <section className="two-column">
         <DepartmentActionPlan actions={actions} />
@@ -1601,7 +1816,7 @@ function SalesAgentWorkspace({
                   <td><strong>{number(item.whitespace_customers)}</strong></td>
                   <td><strong>{pct(item.return_rate_pct)}</strong><small>{money(item.returns_value)}</small></td>
                   <td><strong>{decimal(item.total_stock)}</strong></td>
-                  <td><Blank label="Record exact IDs" /></td>
+                  <td>{item.evaluated_recommendation_lines ? <><strong>{pct(item.recommendation_acceptance_pct)}</strong><small>{item.latest_reason_note || outcomeLabel(item.latest_verdict)}</small></> : <Blank label="Not evaluated" />}</td>
                 </tr>
               );
             })}</tbody>
@@ -1611,9 +1826,9 @@ function SalesAgentWorkspace({
       <section className="evidence-panel">
         <div>
           <span aria-hidden="true">◎</span>
-          <p><strong>Outcome follow-up</strong><small>Customer, cart ID, recommendation ID, SKU, line type, target, actual, outcome, latency and recorded reason stay blank until exact linked feedback exists.</small></p>
+          <p><strong>Outcome follow-up</strong><small>{latestOutcome ? `${latestOutcome.outcome.customer_id} · ${latestOutcome.outcome.invoice_id} · ${latestOutcome.outcome.cart_id} · ${outcomeLabel(latestOutcome.outcome.verdict)} · ${decimal(latestOutcome.outcome.latency_days)} days` : "No linked sales-app outcome exists for the selected SKU yet."}</small></p>
         </div>
-        <Blank label={`${number(data.summary.feedbackRecords)} linked outcomes`} />
+        {latestOutcome ? <BasisTag>{money(latestOutcome.line.actualValue)} actual</BasisTag> : <Blank label={`${number(data.summary.feedbackRecords)} outcome in scope`} />}
       </section>
     </>
   );
@@ -1677,9 +1892,9 @@ function RndWorkspace({
         <article className="card specimen-card">
           <SectionHeader eyebrow="TRIAL EVIDENCE" title="Outcome readiness" />
           <div className="availability-list compact-availability">
-            <div><p><strong>Recommendation acceptance</strong><small>Needs cart_id + rec_id</small></p><b>—</b></div>
-            <div><p><strong>Recorded reason</strong><small>No linked reason rows</small></p><b>—</b></div>
-            <div><p><strong>Trial capture</strong><small>No exact invoice outcome</small></p><b>—</b></div>
+            <div><p><strong>Recommendation acceptance</strong><small>{number(selectedItem.evaluated_recommendation_lines)} evaluated line</small></p><b>{pct(selectedItem.recommendation_acceptance_pct)}</b></div>
+            <div><p><strong>Recorded reason</strong><small>Latest exact sales-app action</small></p><b>{selectedItem.latest_reason_note || "—"}</b></div>
+            <div><p><strong>Trial capture</strong><small>{number(selectedItem.captured_trial_count)} of {number(selectedItem.evaluated_trial_count)} evaluated</small></p><b>{pct(selectedItem.trial_capture_pct)}</b></div>
             <div><p><strong>Graduated evidence</strong><small>Stored profile count</small></p><b>{number(selectedItem.graduated_profile_count)}</b></div>
           </div>
         </article>
@@ -1689,7 +1904,7 @@ function RndWorkspace({
         <div className="table-scroll">
           <table>
             <caption>R and D product diagnostic table</caption>
-            <thead><tr><th>SKU</th><th>Trend</th><th>Movement</th><th>Returns</th><th>Buyer reach</th><th>Whitespace</th><th>Profile mix</th><th>First / last sale</th><th>Stock</th><th>Valuation</th></tr></thead>
+            <thead><tr><th>SKU</th><th>Trend</th><th>Movement</th><th>Returns</th><th>Buyer reach</th><th>Whitespace</th><th>Profile mix</th><th>Trial outcome</th><th>First / last sale</th><th>Stock</th><th>Valuation</th></tr></thead>
             <tbody>{sortBy(items, (item) => item.returns_value).slice(0, 60).map((item) => (
               <tr key={item.product_id}>
                 <td><strong>{item.product_name || "Description unavailable"}</strong><small>{item.product_id} · {item.category || "Category blank"}</small></td>
@@ -1699,6 +1914,7 @@ function RndWorkspace({
                 <td><strong>{pct(item.buyer_penetration_pct)}</strong><small>{number(item.buyer_count)} buyers</small></td>
                 <td><strong>{number(item.whitespace_customers)}</strong></td>
                 <td><strong>{number(item.familiar_profile_count)} / {number(item.whitespace_trial_profile_count)} / {number(item.graduated_profile_count)}</strong><small>F / Trial / G</small></td>
+                <td><strong>{pct(item.trial_capture_pct)}</strong><small>{item.latest_reason_note || outcomeLabel(item.latest_verdict)}</small></td>
                 <td><strong>{shortDate(item.first_sale_date)}</strong><small>{shortDate(item.last_sale_date)}</small></td>
                 <td><strong>{decimal(item.total_stock)}</strong></td>
                 <td><strong>{decimal(item.selected_cost)}</strong><small>{item.valuation_class || "—"} · {item.price_control || "—"}</small></td>
@@ -1734,6 +1950,8 @@ function FinanceWorkspace({
         <KpiCard label="Invoice control" value={number(summary.invoiceLines)} detail={`${number(summary.invoices)} reconciled invoices`} basis="POSTGRESQL" />
         <KpiCard label="Valuation coverage" value={number(summary.valuationRows)} detail={`${number(summary.pricedProducts)} products with cost`} basis="SAP MBEW" />
         <KpiCard label="Gross margin" value="—" detail={`${number(summary.grossMarginProducts)} governed margin products · currencies missing`} basis="BLOCKED CONTROL" />
+        <KpiCard label="Evaluated mix value" value={money(summary.evaluatedRecommendationValue)} detail={`${number(summary.evaluatedRecommendations)} exact linked recommendation`} basis="SALES-APP TARGET" />
+        <KpiCard label="Linked invoice value" value={money(summary.evaluatedInvoiceValue)} detail={`${pct(summary.avgTargetAttainmentPct)} average target attainment`} tone="positive" basis="EXACT OUTCOME" />
       </section>
       <section className="two-column finance-control-grid">
         <DepartmentActionPlan actions={actions} />
@@ -1885,7 +2103,7 @@ function HealthView({ data }: { data: DashboardData }) {
       <section className="health-hero live-health">
         <div className="health-state">
           <span className="health-icon health-ok" aria-hidden="true">✓</span>
-          <div><p className="eyebrow">ENVIRONMENT STATE</p><h2>Live PostgreSQL connected through n8n</h2><p>Sales, returns, geography, valuation, product-mix profiles and issued recommendations are live. Unsupported fields remain blank.</p></div>
+          <div><p className="eyebrow">ENVIRONMENT STATE</p><h2>Live PostgreSQL connected through n8n</h2><p>Sales, returns, geography, valuation, product-mix profiles, issued recommendations and sales-app learning outcomes are live. Unsupported fields remain blank.</p></div>
         </div>
         <div className="health-meta">
           <div><span>API refreshed</span><strong>{dateTime(data.generatedAt)}</strong></div>
@@ -1899,7 +2117,7 @@ function HealthView({ data }: { data: DashboardData }) {
         <KpiCard label="Products" value={number(summary.activeProducts)} detail={`${number(summary.describedProducts)} invoice-observed descriptions`} basis="PRODUCT MASTER" />
         <KpiCard label="Product-mix profiles" value={number(summary.activeProfiles)} detail={`${number(summary.learningStates)} learning states · ${summary.activeModelVersion ?? "No active model"}`} tone={readiness.profiles ? "positive" : "warning"} basis="MODEL ENGINE" />
         <KpiCard label="Geography coverage" value={pct(summary.geoCoveragePct)} detail={`${number(summary.geocodedSalesCustomers)} geocoded sales customers`} tone={summary.geoCoveragePct === 100 ? "positive" : "warning"} basis="PARTIAL" />
-        <KpiCard label="Recommendation feedback" value={number(summary.feedbackRecords)} detail="Exact outcomes stay blank until linked rows arrive" tone="warning" basis="EMPTY TABLE" />
+        <KpiCard label="Recommendation feedback" value={number(summary.feedbackRecords)} detail={`${number(summary.evaluatedRecommendationLines)} SKU lines · ${pct(summary.recommendationAcceptancePct)} accepted`} tone="positive" basis="EXACT LINKED OUTCOME" />
         <KpiCard label="Valuation rows" value={number(summary.valuationRows)} detail={`${number(summary.pricedProducts)} products with valuation cost`} tone="positive" basis="SAP MBEW" />
       </section>
 
@@ -1913,7 +2131,7 @@ function HealthView({ data }: { data: DashboardData }) {
               ["SAP valuation", "Ready", `${number(summary.valuationRows)} MBEW rows are loaded.`],
               ["Product-mix engine", "Ready", `${number(summary.activeProfiles)} active customer profiles and ${number(summary.recommendations)} issued cart are stored.`],
               ["Customer geography", "Pending", `${pct(summary.geoCoveragePct)} of sales customers currently have coordinates.`],
-              ["Recommendation outcomes", "Blocked", "No exact cart / recommendation / invoice links are stored."],
+              ["Recommendation outcomes", readiness.recommendationOutcomes ? "Ready" : "Blocked", readiness.recommendationOutcomes ? `${number(summary.feedbackRecords)} exact cart / recommendation / invoice outcome is stored.` : "No exact cart / recommendation / invoice links are stored."],
               ["GP and order UOM", "Blocked", "Cost currency and governed sales UOM are not supplied, so GP and UOM stay blank."],
               ["Authoritative outlet universe", "Blocked", "Required for true local-market penetration."],
             ].map(([title, state, detail]) => (
@@ -1934,7 +2152,7 @@ function HealthView({ data }: { data: DashboardData }) {
             <div><BasisTag tone="missing">Blank</BasisTag><p><strong>Gross margin</strong><small>Cost currency is absent, so invoice price and valuation cost are not compared</small></p><b>Unavailable</b></div>
             <div><BasisTag tone="proxy">Proxy</BasisTag><p><strong>Observed buyer penetration</strong><small>SKU buyers / active direct-dealer buyers</small></p><b>Directional</b></div>
             <div><BasisTag tone="proxy">Proxy</BasisTag><p><strong>Observed whitespace</strong><small>Active buyers without a positive SKU purchase</small></p><b>Directional</b></div>
-            <div><BasisTag tone="missing">Blank</BasisTag><p><strong>Recommendation acceptance</strong><small>Needs exact cart_id and rec_id on invoice feedback</small></p><b>Unavailable</b></div>
+            <div><BasisTag>Exact now</BasisTag><p><strong>Recommendation acceptance</strong><small>Positive linked invoice lines / evaluated recommendation lines</small></p><b>{pct(summary.recommendationAcceptancePct)}</b></div>
             <div><BasisTag tone="missing">Blank</BasisTag><p><strong>True local-market penetration</strong><small>Needs authoritative outlet universe</small></p><b>Unavailable</b></div>
           </div>
         </article>
@@ -1947,7 +2165,7 @@ function HealthView({ data }: { data: DashboardData }) {
             <caption>Live data quality issue register</caption>
             <thead><tr><th>Severity</th><th>Issue</th><th>Affected records</th><th>Metric impact</th><th>Recommended action</th><th>Status</th></tr></thead>
             <tbody>
-              <tr><td><span className="severity severity-high">High</span></td><td><strong>Recommendation outcome linkage absent</strong><small>invoice_feedback has no linked rows</small></td><td>{number(summary.feedbackRecords)}</td><td>Acceptance & capture</td><td>Persist cart_id and rec_id with invoice outcome</td><td>{readiness.recommendationOutcomes ? "Resolved" : "Open"}</td></tr>
+              <tr><td><span className={`severity ${readiness.recommendationOutcomes ? "severity-low" : "severity-high"}`}>{readiness.recommendationOutcomes ? "Closed" : "High"}</span></td><td><strong>Recommendation outcome linkage</strong><small>{readiness.recommendationOutcomes ? "Exact cart, recommendation, invoice and SKU rows are linked" : "invoice_feedback has no linked rows"}</small></td><td>{number(summary.feedbackRecords)}</td><td>Acceptance & capture</td><td>{readiness.recommendationOutcomes ? "Continue submitting every sales-app result with exact IDs" : "Persist cart_id and rec_id with invoice outcome"}</td><td>{readiness.recommendationOutcomes ? "Resolved" : "Open"}</td></tr>
               <tr><td><span className="severity severity-high">High</span></td><td><strong>GP basis unavailable</strong><small>MBEW cost currency and invoice currency are not supplied</small></td><td>{number(summary.grossMarginProducts)}</td><td>Margin & GP ranking</td><td>Load governed currency-compatible price and cost</td><td>{readiness.grossMargin ? "Resolved" : "Open"}</td></tr>
               <tr><td><span className="severity severity-medium">Medium</span></td><td><strong>Customer coordinates incomplete</strong><small>Sales customers without geography</small></td><td>{number(summary.salesCustomers - summary.geocodedSalesCustomers)}</td><td>Map completeness</td><td>Load the remaining customer locations</td><td>Open</td></tr>
               <tr><td><span className="severity severity-medium">Medium</span></td><td><strong>Product attributes incomplete</strong><small>{number(summary.categorizedProducts)} products categorized; {number(summary.salesUnitProducts)} have governed sales UOM</small></td><td>{number(summary.activeProducts - summary.categorizedProducts)}</td><td>Category & order sizing</td><td>Load authoritative category, UOM and lifecycle fields</td><td>Open</td></tr>
@@ -1963,7 +2181,7 @@ function HealthView({ data }: { data: DashboardData }) {
           {[
             ["01", "Sales, returns, valuation & model", "PostgreSQL invoices, SAP MBEW, active profiles and issued carts", "Live"],
             ["02", "Remaining customer geography", "Complete the 54 currently ungeocoded sales customers", "Partial"],
-            ["03", "Recommendation outcome linkage", "Exact cart, recommendation and invoice IDs", "Required"],
+            ["03", "Recommendation outcome linkage", `${number(summary.feedbackRecords)} exact cart, recommendation and invoice outcome currently stored`, readiness.recommendationOutcomes ? "Live" : "Required"],
             ["04", "Product attributes", "Category, UOM, lifecycle and governed selling price", "Required"],
             ["05", "Outlet & market universe", "Stable hierarchy and addressable outlet denominator", "Penetration"],
           ].map(([num, title, detail, tag]) => (

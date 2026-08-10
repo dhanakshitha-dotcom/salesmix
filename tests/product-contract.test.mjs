@@ -31,6 +31,13 @@ test("preserves the SKU Pulse live-data and metric-honesty contract", async () =
   assert.match(page, /Whitespace trial/);
   assert.match(page, /Graduated/);
   assert.match(page, /Stored seed to captured trial/);
+  assert.match(page, /Recent recommendation outcomes/);
+  assert.match(page, /Recorded non-acceptance reasons/);
+  assert.match(page, /EXACT LINKED OUTCOME/);
+  assert.match(page, /recommendationOutcomes/);
+  assert.match(page, /cart_actions/);
+  assert.match(page, /evaluatedRecommendationLines/);
+  assert.match(page, /trialCapturePct/);
   assert.match(page, /Unavailable fields remain blank/);
   assert.match(page, /No exact recommendation evidence is stored/);
   assert.doesNotMatch(page, /const\s+(?:products|skus|portfolioData)\s*=\s*\[/i);
